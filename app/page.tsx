@@ -1,835 +1,1191 @@
-'use client'
-'use client'
+"use client";
 
-import { useEffect, useMemo, useRef, useState } from "react"
-import { motion } from "framer-motion"
-import { Card, CardContent } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
-import { Textarea } from "@/components/ui/textarea"
-import { Label } from "@/components/ui/label"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Separator } from "@/components/ui/separator"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { Star, StarOff, Copy, Plus, Download, Upload, Filter, MoreVertical, Pencil, Trash2, Sparkles } from "lucide-react"
+import React, { useEffect, useMemo, useState } from "react";
+import { createClient } from "@supabase/supabase-js";
 
-type Status = "Ativa" | "Em revisão" | "Arquivada"
+// ============================
+// SUPABASE
+// ============================
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
+
+// ============================
+// TYPES
+// ============================
+type Role = "admin" | "supervisor" | "leitor";
 
 type Resposta = {
-  id: string
-  tema: string
-  subtema: string
-  assunto: string
-  produto: string
-  canal: "Chat" | "E-mail" | "Telefone" | "WhatsApp" | "Omnichannel"
-  status: Status
-  tags: string[]
-  resposta: string
-  atualizadoEm: string
-  favorito?: boolean
+  id: string;
+  tema: string;
+  subtema: string;
+  assunto: string;
+  produto: string;
+  canal: string;
+  status: string;
+  tags: string[];
+  resposta: string;
+  favorito: boolean;
+  atualizadoEm: string;
+};
+
+type UserRow = {
+  user_id: string;
+  email: string;
+  nome: string;
+  telefone: string;
+  role: Role;
+  created_at: string;
+};
+
+// ============================
+// HELPERS
+// ============================
+function dbToResposta(r: any): Resposta {
+  return {
+    id: String(r.id),
+    tema: r.tema ?? "",
+    subtema: r.subtema ?? "",
+    assunto: r.assunto ?? "",
+    produto: r.produto ?? "",
+    canal: r.canal ?? "",
+    status: r.status ?? "",
+    tags: Array.isArray(r.tags)
+      ? r.tags
+      : String(r.tags ?? "")
+          .split("|")
+          .map((t: string) => t.trim())
+          .filter(Boolean),
+    resposta: r.resposta ?? "",
+    favorito: !!r.favorito,
+    atualizadoEm: r.updated_at ?? r.atualizadoEm ?? new Date().toISOString(),
+  };
 }
 
-const seed: Resposta[] = [
-  {
-    id: "1",
-    tema: "Pagamento",
-    subtema: "Boleto",
-    assunto: "2ª via de boleto",
-    produto: "Assinatura",
-    canal: "Chat",
-    status: "Ativa",
-    tags: ["boleto", "segunda via", "portal"],
-    resposta:
-      "Você pode emitir a 2ª via acessando o Portal do Cliente > Financeiro > Boletos. Se preferir, me informe CPF/CNPJ e eu confirmo o link para você.",
-    atualizadoEm: new Date().toISOString(),
-    favorito: true,
-  },
-  {
-    id: "2",
-    tema: "Cancelamento",
-    subtema: "Contrato",
-    assunto: "Solicitar cancelamento",
-    produto: "Plano Pro",
-    canal: "WhatsApp",
-    status: "Ativa",
-    tags: ["cancelamento", "protocolo", "prazo"],
-    resposta:
-      "Consigo te ajudar com o cancelamento. Para iniciar, confirme: nome completo, CPF/CNPJ e o motivo. Após abertura, o prazo de conclusão é de até 2 dias úteis.",
-    atualizadoEm: new Date().toISOString(),
-  },
-  {
-    id: "3",
-    tema: "Entrega",
-    subtema: "Prazo",
-    assunto: "Prazo de entrega",
-    produto: "Loja",
-    canal: "E-mail",
-    status: "Ativa",
-    tags: ["prazo", "rastreamento"],
-    resposta:
-      "O prazo médio é de 5 dias úteis após confirmação do pagamento. Se você me passar o CEP, eu verifico a previsão exata e o status do envio.",
-    atualizadoEm: new Date().toISOString(),
-  },
-  {
-    id: "4",
-    tema: "Pagamento",
-    subtema: "Reembolso",
-    assunto: "Estorno",
-    produto: "Loja",
-    canal: "Chat",
-    status: "Em revisão",
-    tags: ["estorno", "cartão", "pix"],
-    resposta:
-      "O estorno depende do método: cartão (até 2 faturas) e PIX (até 7 dias corridos). Vou confirmar o seu caso pelo pedido e te retorno.",
-    atualizadoEm: new Date().toISOString(),
-  },
-  {
-    id: "5",
-    tema: "Conta",
-    subtema: "Acesso",
-    assunto: "Alterar senha",
-    produto: "Plataforma",
-    canal: "Omnichannel",
-    status: "Ativa",
-    tags: ["senha", "login", "segurança"],
-    resposta: "Acesse Configurações > Segurança > Alterar senha. Se não lembrar a atual, use “Esqueci minha senha” na tela de login.",
-    atualizadoEm: new Date().toISOString(),
-  },
-]
+function buildPromptIA(r: Resposta) {
+  return `
+Você é um atendente virtual. Use a base abaixo para responder o usuário com clareza e objetividade.
 
-function unique(vals: string[]) {
-  return Array.from(new Set(vals)).sort((a, b) => a.localeCompare(b))
-}
+Tema: ${r.tema}
+Subtema: ${r.subtema}
+Assunto: ${r.assunto}
+Produto: ${r.produto}
+Canal: ${r.canal}
+Status: ${r.status}
+Tags: ${r.tags.join(", ")}
 
-function toCsv(rows: Resposta[]) {
-  const header = ["id", "tema", "subtema", "assunto", "produto", "canal", "status", "tags", "resposta", "atualizadoEm", "favorito"]
-  const esc = (v: unknown) => {
-    const s = String(v ?? "")
-    if (s.includes("\n") || s.includes(",") || s.includes('"')) return '"' + s.replaceAll('"', '""') + '"'
-    return s
-  }
-  const lines = [header.join(",")]
-  for (const r of rows) {
-    lines.push(
-      [r.id, r.tema, r.subtema, r.assunto, r.produto, r.canal, r.status, r.tags.join("|"), r.resposta, r.atualizadoEm, r.favorito ? "true" : "false"]
-        .map(esc)
-        .join(",")
-    )
-  }
-  return lines.join("\n")
-}
-
-function downloadText(filename: string, text: string, mime = "text/plain;charset=utf-8") {
-  const blob = new Blob([text], { type: mime })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement("a")
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
-}
-
-function uuid() {
-  return Math.random().toString(16).slice(2) + Date.now().toString(16)
-}
-
-function clampText(s: string, max = 180) {
-  if (!s) return s
-  return s.length > max ? s.slice(0, max).trimEnd() + "…" : s
-}
-
-function containsIgnore(hay: string, needle: string) {
-  return hay.toLowerCase().includes(needle.toLowerCase())
-}
-
-function makePrompt(r: Resposta) {
-  return `Você é um atendente. Responda com clareza e objetividade.
-
-Contexto:
-- Tema: ${r.tema}
-- Subtema: ${r.subtema}
-- Assunto: ${r.assunto}
-- Produto: ${r.produto}
-- Canal: ${r.canal}
-
-Base sugerida (pode adaptar):
+BASE (resposta oficial):
 ${r.resposta}
 
-Agora gere a resposta final e inclua, se necessário, uma pergunta de confirmação para avançar.`
+Agora gere uma resposta final ao usuário (sem inventar informação).
+`.trim();
 }
 
-function EditorDialog({
-  open,
-  onOpenChange,
-  initial,
-  onSave,
-}: {
-  open: boolean
-  onOpenChange: (v: boolean) => void
-  initial: Resposta | null
-  onSave: (data: Omit<Resposta, "id" | "atualizadoEm">) => void
-}) {
-  const [tema, setTema] = useState("")
-  const [subtema, setSubtema] = useState("")
-  const [assunto, setAssunto] = useState("")
-  const [produto, setProduto] = useState("")
-  const [canal, setCanal] = useState<Resposta["canal"]>("Chat")
-  const [status, setStatus] = useState<Status>("Ativa")
-  const [tags, setTags] = useState("")
-  const [resposta, setResposta] = useState("")
-  const [favorito, setFavorito] = useState(false)
-
-  useEffect(() => {
-    if (!open) return
-    setTema(initial?.tema ?? "")
-    setSubtema(initial?.subtema ?? "")
-    setAssunto(initial?.assunto ?? "")
-    setProduto(initial?.produto ?? "")
-    setCanal(initial?.canal ?? "Chat")
-    setStatus(initial?.status ?? "Ativa")
-    setTags((initial?.tags ?? []).join("|"))
-    setResposta(initial?.resposta ?? "")
-    setFavorito(!!initial?.favorito)
-  }, [open, initial])
-
-  const disabled = !tema.trim() || !assunto.trim() || !resposta.trim()
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl rounded-2xl">
-        <DialogHeader>
-          <DialogTitle>{initial ? "Editar resposta" : "Nova resposta"}</DialogTitle>
-        </DialogHeader>
-
-        <div className="grid md:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label>Tema</Label>
-            <Input value={tema} onChange={(e) => setTema(e.target.value)} placeholder="Ex: Pagamento" />
-          </div>
-          <div className="space-y-2">
-            <Label>Subtema</Label>
-            <Input value={subtema} onChange={(e) => setSubtema(e.target.value)} placeholder="Ex: Boleto" />
-          </div>
-          <div className="space-y-2">
-            <Label>Assunto</Label>
-            <Input value={assunto} onChange={(e) => setAssunto(e.target.value)} placeholder="Ex: 2ª via" />
-          </div>
-          <div className="space-y-2">
-            <Label>Produto</Label>
-            <Input value={produto} onChange={(e) => setProduto(e.target.value)} placeholder="Ex: Assinatura" />
-          </div>
-
-          <div className="space-y-2">
-            <Label>Canal</Label>
-            <Select value={canal} onValueChange={(v) => setCanal(v as any)}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(["Chat", "E-mail", "Telefone", "WhatsApp", "Omnichannel"] as const).map((c) => (
-                  <SelectItem key={c} value={c}>
-                    {c}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-2">
-            <Label>Status</Label>
-            <Select value={status} onValueChange={(v) => setStatus(v as any)}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(["Ativa", "Em revisão", "Arquivada"] as const).map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {s}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-2 md:col-span-2">
-            <Label>Tags</Label>
-            <Input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="Separe por |  Ex: boleto|segunda via|portal" />
-            <div className="text-xs text-muted-foreground">Dica: use tags para melhorar a busca e a recomendação por IA.</div>
-          </div>
-
-          <div className="space-y-2 md:col-span-2">
-            <Label>Resposta</Label>
-            <Textarea value={resposta} onChange={(e) => setResposta(e.target.value)} placeholder="Cole aqui a resposta padrão…" className="min-h-[160px]" />
-          </div>
-
-          <div className="flex items-center gap-2 md:col-span-2">
-            <Checkbox checked={favorito} onCheckedChange={(v) => setFavorito(!!v)} />
-            <span className="text-sm">Marcar como favorito</span>
-          </div>
-        </div>
-
-        <DialogFooter className="gap-2">
-          <Button variant="outline" className="rounded-2xl" onClick={() => onOpenChange(false)}>
-            Cancelar
-          </Button>
-          <Button
-            className="rounded-2xl"
-            disabled={disabled}
-            onClick={() =>
-              onSave({
-                tema: tema.trim(),
-                subtema: subtema.trim() || "Geral",
-                assunto: assunto.trim(),
-                produto: produto.trim() || "Geral",
-                canal,
-                status,
-                tags: tags
-                  .split("|")
-                  .map((t) => t.trim())
-                  .filter(Boolean),
-                resposta: resposta.trim(),
-                favorito,
-              } as any)
-            }
-          >
-            Salvar
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
+function roleLabel(r: Role) {
+  if (r === "admin") return "Administrador";
+  if (r === "supervisor") return "Supervisor";
+  return "Operador";
 }
 
+function permissoesLabel(r: Role) {
+  if (r === "admin") return "Administrador (tudo + excluir + gerir usuários)";
+  if (r === "supervisor") return "Supervisor (criar/editar/favoritar)";
+  return "Operador (leitura)";
+}
+
+function getDisplayName(user: any) {
+  const full =
+    (user?.user_metadata?.full_name as string | undefined) ||
+    (user?.user_metadata?.name as string | undefined) ||
+    (user?.user_metadata?.display_name as string | undefined);
+
+  if (full && full.trim()) return full.trim();
+
+  const email: string | undefined = user?.email;
+  if (email) return email.split("@")[0];
+
+  return "Usuário";
+}
+
+// ============================
+// PAGE
+// ============================
 export default function Page() {
-  const [respostas, setRespostas] = useState<Resposta[]>(seed)
+  const [mounted, setMounted] = useState(false);
+
+  const [respostas, setRespostas] = useState<Resposta[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  // role/permissões (vem do Supabase via RPC)
+  const [role, setRole] = useState<Role>("leitor");
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [canWrite, setCanWrite] = useState(false);
+  const [canFavorite, setCanFavorite] = useState(false);
+
+  // expand/menu
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+
+  // auth
+  const [session, setSession] = useState<any>(null);
+  const user = session?.user ?? null;
+  const [authLoading, setAuthLoading] = useState(true);
+
+  // login form
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  // reset senha (login)
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetMsg, setResetMsg] = useState<string | null>(null);
+
+  // filtros
+  const [busca, setBusca] = useState("");
+  const [filtroTema, setFiltroTema] = useState("Todos");
+  const [filtroSubtema, setFiltroSubtema] = useState("Todos");
+  const [filtroProduto, setFiltroProduto] = useState("Todos");
+  const [filtroCanal, setFiltroCanal] = useState("Todos");
+  const [filtroStatus, setFiltroStatus] = useState("Todos");
+  const [somenteFavoritos, setSomenteFavoritos] = useState(false);
+
+  // modal resposta
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  const [form, setForm] = useState<Omit<Resposta, "id" | "atualizadoEm">>({
+    tema: "",
+    subtema: "",
+    assunto: "",
+    produto: "",
+    canal: "",
+    status: "Ativa",
+    tags: [],
+    resposta: "",
+    favorito: false,
+  });
+
+  // Cadastro de usuários
+  const [usersOpen, setUsersOpen] = useState(false);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [usersList, setUsersList] = useState<UserRow[]>([]);
+  const [userSearch, setUserSearch] = useState("");
+
+  // ============================
+  // MOUNTED (evita mismatch de data/hora)
+  // ============================
   useEffect(() => {
-  const saved = localStorage.getItem("base_respostas")
-  if (saved) setRespostas(JSON.parse(saved))
-}, [])
+    setMounted(true);
+  }, []);
 
-useEffect(() => {
-  localStorage.setItem("base_respostas", JSON.stringify(respostas))
-}, [respostas])
+  // ============================
+  // AUTH
+  // ============================
+  useEffect(() => {
+    let subscription: any;
 
-  const [busca, setBusca] = useState("")
-  const [tema, setTema] = useState("Todos")
-  const [subtema, setSubtema] = useState("Todos")
-  const [produto, setProduto] = useState("Todos")
-  const [canal, setCanal] = useState("Todos")
-  const [status, setStatus] = useState<Status | "Todos">("Todos")
-  const [somenteFavoritos, setSomenteFavoritos] = useState(false)
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      setSession(data.session ?? null);
+      setAuthLoading(false);
+    })();
 
-  const [view, setView] = useState<"cards" | "tabela">("cards")
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const [editingId, setEditingId] = useState<string | null>(null)
+    const { data } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
+      setSession(newSession ?? null);
+    });
 
-  const fileRef = useRef<HTMLInputElement | null>(null)
+    subscription = data.subscription;
+    return () => subscription?.unsubscribe?.();
+  }, []);
 
-  const opcoes = useMemo(() => {
-    return {
-      temas: ["Todos", ...unique(respostas.map((r) => r.tema))],
-      subtemas: ["Todos", ...unique(respostas.map((r) => r.subtema))],
-      produtos: ["Todos", ...unique(respostas.map((r) => r.produto))],
-      canais: ["Todos", ...unique(respostas.map((r) => r.canal))],
-      status: ["Todos", ...unique(respostas.map((r) => r.status))] as Array<"Todos" | Status>,
+  // Carregar role + permissões quando tiver sessão
+  useEffect(() => {
+    if (!session?.user) return;
+
+    (async () => {
+      const { data: roleData, error: roleErr } = await supabase.rpc("user_role");
+      if (roleErr) console.error("Erro ao carregar role:", roleErr);
+
+      const finalRole = (roleData ?? "leitor") as Role;
+
+      setRole(finalRole);
+      setIsAdmin(finalRole === "admin");
+      setCanWrite(finalRole === "admin" || finalRole === "supervisor");
+
+      const { data: canFavData, error: canFavErr } = await supabase.rpc("can_favorite");
+      if (canFavErr) console.error("Erro ao carregar permissão de favorito:", canFavErr);
+
+      setCanFavorite(!!canFavData);
+    })();
+  }, [session?.user?.id]);
+
+  // ============================
+  // LOAD DATA
+  // ============================
+  async function reload() {
+    setLoading(true);
+
+    const { data, error } = await supabase
+      .from("respostas")
+      .select("*")
+      .order("updated_at", { ascending: false });
+
+    if (error) {
+      console.error("Erro ao carregar respostas:", error);
+      alert("Erro ao carregar respostas: " + error.message);
+      setLoading(false);
+      return;
     }
-  }, [respostas])
+
+    setRespostas((data ?? []).map(dbToResposta));
+    setLoading(false);
+  }
 
   useEffect(() => {
-    setSubtema("Todos")
-  }, [tema])
+    if (session) reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
 
-  const respostasFiltradas = useMemo(() => {
-    const b = busca.trim()
-    return respostas
-      .filter((r) => {
-        const matchBusca =
-          !b ||
-          containsIgnore(r.assunto, b) ||
-          containsIgnore(r.resposta, b) ||
-          containsIgnore(r.tema, b) ||
-          containsIgnore(r.subtema, b) ||
-          containsIgnore(r.produto, b) ||
-          r.tags.some((t) => containsIgnore(t, b))
+  // ============================
+  // RESET SENHA (LOGIN)
+  // ============================
+  async function forgotPassword() {
+    setResetMsg(null);
 
-        const matchTema = tema === "Todos" || r.tema === tema
-        const matchSubtema = subtema === "Todos" || r.subtema === subtema
-        const matchProduto = produto === "Todos" || r.produto === produto
-        const matchCanal = canal === "Todos" || r.canal === canal
-        const matchStatus = status === "Todos" || r.status === status
-        const matchFav = !somenteFavoritos || !!r.favorito
-
-        return matchBusca && matchTema && matchSubtema && matchProduto && matchCanal && matchStatus && matchFav
-      })
-      .sort((a, b2) => {
-        const fa = a.favorito ? 1 : 0
-        const fb = b2.favorito ? 1 : 0
-        if (fa !== fb) return fb - fa
-        return new Date(b2.atualizadoEm).getTime() - new Date(a.atualizadoEm).getTime()
-      })
-  }, [respostas, busca, tema, subtema, produto, canal, status, somenteFavoritos])
-
-  const stats = useMemo(() => {
-    const total = respostas.length
-    const ativos = respostas.filter((r) => r.status === "Ativa").length
-    const revisao = respostas.filter((r) => r.status === "Em revisão").length
-    const arquivadas = respostas.filter((r) => r.status === "Arquivada").length
-    const fav = respostas.filter((r) => r.favorito).length
-    return { total, ativos, revisao, arquivadas, fav }
-  }, [respostas])
-
-  const editing = useMemo(() => {
-    if (!editingId) return null
-    return respostas.find((r) => r.id === editingId) ?? null
-  }, [editingId, respostas])
-
-  function openCreate() {
-    setEditingId(null)
-    setDialogOpen(true)
-  }
-
-  function openEdit(id: string) {
-    setEditingId(id)
-    setDialogOpen(true)
-  }
-
-  function remove(id: string) {
-    setRespostas((prev) => prev.filter((r) => r.id !== id))
-  }
-
-  function toggleFav(id: string) {
-    setRespostas((prev) => prev.map((r) => (r.id === id ? { ...r, favorito: !r.favorito, atualizadoEm: new Date().toISOString() } : r)))
-  }
-
-  async function copy(text: string) {
-    try {
-      await navigator.clipboard.writeText(text)
-    } catch {
-      const ta = document.createElement("textarea")
-      ta.value = text
-      document.body.appendChild(ta)
-      ta.select()
-      document.execCommand("copy")
-      ta.remove()
+    const emailFinal = email.trim().toLowerCase();
+    if (!emailFinal) {
+      setResetMsg("Digite seu e-mail para receber o link de redefinição.");
+      return;
     }
-  }
 
-  function exportJson() {
-    downloadText(`base-respostas-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(respostas, null, 2), "application/json;charset=utf-8")
-  }
-
-  function exportCsv() {
-    downloadText(`base-respostas-${new Date().toISOString().slice(0, 10)}.csv`, toCsv(respostas), "text/csv;charset=utf-8")
-  }
-
-  function triggerImport() {
-    fileRef.current?.click()
-  }
-
-  async function handleImport(file?: File | null) {
-    if (!file) return
-    const text = await file.text()
-    const ext = file.name.toLowerCase().split(".").pop()
-
+    setResetLoading(true);
     try {
-      if (ext === "json") {
-        const data = JSON.parse(text)
-        if (!Array.isArray(data)) throw new Error("JSON inválido: esperado array")
+      const redirectTo = `${window.location.origin}/reset`;
 
-        const parsed: Resposta[] = data
-          .filter(Boolean)
-          .map((r: any) => ({
-            id: String(r.id ?? uuid()),
-            tema: String(r.tema ?? ""),
-            subtema: String(r.subtema ?? ""),
-            assunto: String(r.assunto ?? ""),
-            produto: String(r.produto ?? ""),
-            canal: (r.canal ?? "Chat") as Resposta["canal"],
-            status: (r.status ?? "Ativa") as Status,
-            tags: Array.isArray(r.tags) ? r.tags.map(String) : String(r.tags ?? "").split("|").filter(Boolean),
-            resposta: String(r.resposta ?? ""),
-            atualizadoEm: String(r.atualizadoEm ?? new Date().toISOString()),
-            favorito: !!r.favorito,
-          }))
-          .filter((r) => r.tema && r.assunto && r.resposta)
-
-        setRespostas(parsed)
-      } else if (ext === "csv") {
-        const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0)
-        const header = lines.shift()?.split(",").map((h) => h.trim()) ?? []
-        const idx = (k: string) => header.indexOf(k)
-
-        if (!header.includes("tema") || !header.includes("assunto") || !header.includes("resposta")) {
-          throw new Error("CSV inválido: faltam colunas mínimas (tema, assunto, resposta)")
-        }
-
-        const parsed: Resposta[] = lines.map((line) => {
-          const parts = line.split(",")
-          const get = (k: string) => parts[idx(k)] ?? ""
-          return {
-            id: get("id") || uuid(),
-            tema: get("tema"),
-            subtema: get("subtema"),
-            assunto: get("assunto"),
-            produto: get("produto"),
-            canal: (get("canal") as any) || "Chat",
-            status: (get("status") as any) || "Ativa",
-            tags: (get("tags") || "").split("|").filter(Boolean),
-            resposta: get("resposta"),
-            atualizadoEm: get("atualizadoEm") || new Date().toISOString(),
-            favorito: (get("favorito") || "").toLowerCase() === "true",
-          } as Resposta
-        })
-
-        setRespostas(parsed.filter((r) => r.tema && r.assunto && r.resposta))
-      } else {
-        throw new Error("Formato não suportado. Use .json ou .csv")
+      const { error } = await supabase.auth.resetPasswordForEmail(emailFinal, { redirectTo });
+      if (error) {
+        setResetMsg("Erro: " + error.message);
+        return;
       }
-    } catch (e) {
-      console.error("Falha ao importar base", e)
-      alert("Falha ao importar. Use JSON ou CSV com colunas corretas.")
+
+      setResetMsg(
+        "Pronto! Enviamos um e-mail com o link para redefinir sua senha. Verifique a caixa de entrada e o spam."
+      );
+    } finally {
+      setResetLoading(false);
     }
   }
 
-  return (
-    <div className="p-6 space-y-6">
-      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-2">
-        <div className="flex items-start justify-between gap-3 flex-wrap">
-          <div>
-            <h1 className="text-2xl font-bold">Dashboard de Respostas</h1>
-            <p className="text-muted-foreground">Base de conhecimento para atendentes filtrarem por temas, assuntos e contexto.</p>
+  // fecha menu ao clicar fora / ESC
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpenMenuId(null);
+    }
+    function onClick() {
+      setOpenMenuId(null);
+    }
+
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("click", onClick);
+
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("click", onClick);
+    };
+  }, []);
+
+  // ============================
+  // LISTAS FILTROS
+  // ============================
+  const temas = useMemo(
+    () => ["Todos", ...Array.from(new Set(respostas.map((r) => r.tema))).filter(Boolean)],
+    [respostas]
+  );
+  const subtemas = useMemo(
+    () => ["Todos", ...Array.from(new Set(respostas.map((r) => r.subtema))).filter(Boolean)],
+    [respostas]
+  );
+  const produtos = useMemo(
+    () => ["Todos", ...Array.from(new Set(respostas.map((r) => r.produto))).filter(Boolean)],
+    [respostas]
+  );
+  const canais = useMemo(
+    () => ["Todos", ...Array.from(new Set(respostas.map((r) => r.canal))).filter(Boolean)],
+    [respostas]
+  );
+  const statusList = useMemo(
+    () => ["Todos", ...Array.from(new Set(respostas.map((r) => r.status))).filter(Boolean)],
+    [respostas]
+  );
+
+  // ============================
+  // FILTRO
+  // ============================
+  const filtradas = useMemo(() => {
+    const q = busca.toLowerCase();
+
+    return respostas.filter((r) => {
+      if (somenteFavoritos && !r.favorito) return false;
+      if (filtroTema !== "Todos" && r.tema !== filtroTema) return false;
+      if (filtroSubtema !== "Todos" && r.subtema !== filtroSubtema) return false;
+      if (filtroProduto !== "Todos" && r.produto !== filtroProduto) return false;
+      if (filtroCanal !== "Todos" && r.canal !== filtroCanal) return false;
+      if (filtroStatus !== "Todos" && r.status !== filtroStatus) return false;
+
+      const texto = `${r.tema} ${r.subtema} ${r.assunto} ${r.produto} ${r.canal} ${r.status} ${r.resposta} ${r.tags.join(
+        " "
+      )}`.toLowerCase();
+
+      return texto.includes(q);
+    });
+  }, [
+    respostas,
+    busca,
+    filtroTema,
+    filtroSubtema,
+    filtroProduto,
+    filtroCanal,
+    filtroStatus,
+    somenteFavoritos,
+  ]);
+
+  // ============================
+  // CRUD
+  // ============================
+  function abrirNovo() {
+    setEditingId(null);
+    setForm({
+      tema: "",
+      subtema: "",
+      assunto: "",
+      produto: "",
+      canal: "",
+      status: "Ativa",
+      tags: [],
+      resposta: "",
+      favorito: false,
+    });
+    setDialogOpen(true);
+  }
+
+  function abrirEditar(r: Resposta) {
+    setEditingId(r.id);
+    setForm({
+      tema: r.tema,
+      subtema: r.subtema,
+      assunto: r.assunto,
+      produto: r.produto,
+      canal: r.canal,
+      status: r.status,
+      tags: r.tags,
+      resposta: r.resposta,
+      favorito: r.favorito,
+    });
+    setDialogOpen(true);
+  }
+
+  async function saveResposta(data: Omit<Resposta, "id" | "atualizadoEm">) {
+    if (!canWrite) return alert("Apenas Administrador e Supervisor podem salvar/editar.");
+
+    const payload = {
+      ...data,
+      tags: (data.tags ?? []).join("|"),
+      updated_at: new Date().toISOString(),
+    };
+
+    if (editingId) {
+      const { error } = await supabase.from("respostas").update(payload).eq("id", editingId);
+      if (error) return alert("Erro ao atualizar: " + error.message);
+    } else {
+      const { error } = await supabase.from("respostas").insert(payload);
+      if (error) return alert("Erro ao inserir: " + error.message);
+    }
+
+    setDialogOpen(false);
+    setEditingId(null);
+    await reload();
+  }
+
+  async function deleteResposta(id: string) {
+    if (!isAdmin) return alert("Apenas Administrador pode excluir.");
+    if (!confirm("Excluir resposta?")) return;
+
+    const { error } = await supabase.from("respostas").delete().eq("id", id);
+    if (error) return alert("Erro ao excluir: " + error.message);
+
+    await reload();
+  }
+
+  async function toggleFavorito(r: Resposta) {
+    if (!canFavorite) {
+      alert("Você não tem permissão para favoritar.");
+      return;
+    }
+
+    const { error } = await supabase.rpc("set_resposta_favorito", {
+      p_resposta_id: r.id,
+      p_value: !r.favorito,
+    });
+
+    if (error) {
+      alert("Erro ao favoritar: " + error.message);
+      return;
+    }
+
+    setRespostas((prev) => prev.map((x) => (x.id === r.id ? { ...x, favorito: !r.favorito } : x)));
+  }
+
+  // ============================
+  // CADASTRO DE USUÁRIOS
+  // ============================
+  async function loadUsers() {
+    if (!isAdmin) return;
+
+    setUsersLoading(true);
+    const { data, error } = await supabase.rpc("list_users_with_roles");
+
+    if (error) {
+      console.error("Erro ao listar usuários:", error);
+      alert("Erro ao listar usuários: " + error.message);
+    } else {
+      setUsersList((data ?? []) as UserRow[]);
+    }
+
+    setUsersLoading(false);
+  }
+
+  async function updateUserRole(userId: string, newRole: Role) {
+    if (!isAdmin) return alert("Apenas Administrador.");
+
+    const { error } = await supabase.rpc("set_user_role", {
+      p_user_id: userId,
+      p_role: newRole,
+    });
+
+    if (error) {
+      const msg = String((error as any).message || "");
+      if (msg.includes("not_admin")) alert("Você não é Administrador.");
+      else if (msg.includes("invalid_role")) alert("Nível inválido.");
+      else alert("Erro ao atualizar nível: " + msg);
+      return;
+    }
+
+    setUsersList((prev) => prev.map((u) => (u.user_id === userId ? { ...u, role: newRole } : u)));
+  }
+
+  async function saveUserProfile(userId: string, nome: string, telefone: string) {
+    if (!isAdmin) return alert("Apenas Administrador.");
+
+    const { error } = await supabase.rpc("upsert_user_profile", {
+      p_user_id: userId,
+      p_nome: nome ?? "",
+      p_telefone: telefone ?? "",
+    });
+
+    if (error) {
+      const msg = String((error as any).message || "");
+      if (msg.includes("not_admin")) alert("Você não é Administrador.");
+      else alert("Erro ao salvar usuário: " + msg);
+      return;
+    }
+  }
+
+  const usersFiltered = useMemo(() => {
+    const q = userSearch.trim().toLowerCase();
+    if (!q) return usersList;
+
+    return usersList.filter((u) => {
+      const hay = `${u.nome ?? ""} ${u.email ?? ""} ${u.telefone ?? ""} ${u.role ?? ""}`.toLowerCase();
+      return hay.includes(q);
+    });
+  }, [usersList, userSearch]);
+
+  // ============================
+  // UI HELPERS
+  // ============================
+  function toggleExpand(id: string) {
+    setExpandedId((prev) => (prev === id ? null : id));
+  }
+
+  function toggleMenu(id: string) {
+    setOpenMenuId((prev) => (prev === id ? null : id));
+  }
+
+  async function copiarTexto(texto: string) {
+    await navigator.clipboard.writeText(texto);
+    alert("Copiado!");
+  }
+
+  async function copiarPromptIA(r: Resposta) {
+    await navigator.clipboard.writeText(buildPromptIA(r));
+    alert("Prompt copiado! Cole na IA para gerar a resposta.");
+  }
+
+  // ============================
+  // STATS
+  // ============================
+  const total = respostas.length;
+  const ativas = respostas.filter((r) => r.status === "Ativa").length;
+  const revisao = respostas.filter((r) => r.status === "Em revisão").length;
+  const arquivadas = respostas.filter((r) => r.status === "Arquivada").length;
+  const favoritas = respostas.filter((r) => r.favorito).length;
+
+  // ============================
+  // LOGIN SCREEN
+  // ============================
+  if (authLoading) return <div className="p-6">Carregando...</div>;
+
+  if (!session) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
+        <div className="bg-white rounded-xl shadow p-6 w-full max-w-[420px]">
+          <h1 className="text-lg font-semibold mb-1">Entrar</h1>
+          <p className="text-sm text-slate-500 mb-4">Faça login para acessar a dashboard.</p>
+
+          <input
+            className="border rounded-md p-2 w-full mb-2"
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+
+          <input
+            className="border rounded-md p-2 w-full mb-2"
+            placeholder="Senha"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+
+          <div className="flex items-center justify-between mb-4">
+            <button
+              type="button"
+              onClick={forgotPassword}
+              disabled={resetLoading}
+              className="text-sm text-slate-700 underline disabled:opacity-50"
+            >
+              {resetLoading ? "Enviando..." : "Esqueci minha senha"}
+            </button>
+
+            <span className="text-xs text-slate-400">
+              Link vai para: <b>/reset</b>
+            </span>
           </div>
 
-          <div className="flex gap-2 items-center">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" className="rounded-2xl">
-                  <MoreVertical className="h-4 w-4 mr-2" /> Ações
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuLabel>Exportar</DropdownMenuLabel>
-                <DropdownMenuItem onClick={exportJson}>
-                  <Download className="h-4 w-4 mr-2" /> JSON
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={exportCsv}>
-                  <Download className="h-4 w-4 mr-2" /> CSV
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuLabel>Importar</DropdownMenuLabel>
-                <DropdownMenuItem onClick={triggerImport}>
-                  <Upload className="h-4 w-4 mr-2" /> JSON/CSV
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            <Button onClick={openCreate} className="rounded-2xl">
-              <Plus className="h-4 w-4 mr-2" /> Nova resposta
-            </Button>
-
-            <input ref={fileRef} type="file" accept=".json,.csv" className="hidden" onChange={(e) => handleImport(e.target.files?.[0])} />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-          {[
-            { label: "Total", value: stats.total },
-            { label: "Ativas", value: stats.ativos },
-            { label: "Em revisão", value: stats.revisao },
-            { label: "Arquivadas", value: stats.arquivadas },
-            { label: "Favoritos", value: stats.fav },
-          ].map((s) => (
-            <Card key={s.label} className="rounded-2xl shadow-sm">
-              <CardContent className="p-3">
-                <div className="text-xs text-muted-foreground">{s.label}</div>
-                <div className="text-lg font-semibold">{s.value}</div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      </motion.div>
-
-      <Separator />
-
-      <div className="grid md:grid-cols-6 gap-3 items-end">
-        <div className="md:col-span-2">
-          <Label className="text-xs text-muted-foreground">Busca</Label>
-          <Input placeholder="Pesquisar tema, assunto, tags ou conteúdo da resposta…" value={busca} onChange={(e) => setBusca(e.target.value)} />
-        </div>
-
-        <div>
-          <Label className="text-xs text-muted-foreground">Tema</Label>
-          <Select value={tema} onValueChange={setTema}>
-            <SelectTrigger>
-              <SelectValue placeholder="Tema" />
-            </SelectTrigger>
-            <SelectContent>
-              {opcoes.temas.map((t) => (
-                <SelectItem key={t} value={t}>
-                  {t}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div>
-          <Label className="text-xs text-muted-foreground">Subtema</Label>
-          <Select value={subtema} onValueChange={setSubtema}>
-            <SelectTrigger>
-              <SelectValue placeholder="Subtema" />
-            </SelectTrigger>
-            <SelectContent>
-              {opcoes.subtemas.map((s) => (
-                <SelectItem key={s} value={s}>
-                  {s}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div>
-          <Label className="text-xs text-muted-foreground">Produto</Label>
-          <Select value={produto} onValueChange={setProduto}>
-            <SelectTrigger>
-              <SelectValue placeholder="Produto" />
-            </SelectTrigger>
-            <SelectContent>
-              {opcoes.produtos.map((p) => (
-                <SelectItem key={p} value={p}>
-                  {p}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div>
-          <Label className="text-xs text-muted-foreground">Canal</Label>
-          <Select value={canal} onValueChange={setCanal}>
-            <SelectTrigger>
-              <SelectValue placeholder="Canal" />
-            </SelectTrigger>
-            <SelectContent>
-              {opcoes.canais.map((c) => (
-                <SelectItem key={c} value={c}>
-                  {c}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div>
-          <Label className="text-xs text-muted-foreground">Status</Label>
-          <Select value={status} onValueChange={(v) => setStatus(v as any)}>
-            <SelectTrigger>
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              {opcoes.status.map((st) => (
-                <SelectItem key={st} value={st}>
-                  {st}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="md:col-span-6 flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-2">
-            <Filter className="h-4 w-4 text-muted-foreground" />
-            <div className="text-sm text-muted-foreground">{respostasFiltradas.length} resultados</div>
-            <Separator orientation="vertical" className="h-5" />
-            <div className="flex items-center gap-2">
-              <Checkbox checked={somenteFavoritos} onCheckedChange={(v) => setSomenteFavoritos(!!v)} />
-              <span className="text-sm">Somente favoritos</span>
+          {resetMsg && (
+            <div className="text-sm mb-3 p-3 rounded-md bg-slate-50 border text-slate-700">
+              {resetMsg}
             </div>
-          </div>
+          )}
 
-          <Tabs value={view} onValueChange={(v) => setView(v as any)}>
-            <TabsList className="rounded-2xl">
-              <TabsTrigger value="cards" className="rounded-2xl">
-                Cards
-              </TabsTrigger>
-              <TabsTrigger value="tabela" className="rounded-2xl">
-                Tabela
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
+          <button
+            className="bg-slate-900 text-white rounded-md px-4 py-2 w-full"
+            onClick={async () => {
+              setResetMsg(null);
+              const { error } = await supabase.auth.signInWithPassword({ email, password });
+              if (error) alert("Erro: " + error.message);
+            }}
+          >
+            Entrar
+          </button>
+
+          <p className="text-xs text-slate-400 mt-4">
+            Admin cria usuários manualmente no Supabase. Se precisar trocar a senha, use “Esqueci minha
+            senha”.
+          </p>
         </div>
       </div>
+    );
+  }
 
-      <Tabs value={view} onValueChange={(v) => setView(v as any)}>
-        <TabsContent value="cards" className="mt-0">
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {respostasFiltradas.map((r) => (
-              <motion.div key={r.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-                <Card className="rounded-2xl shadow-sm">
-                  <CardContent className="p-4 space-y-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex gap-2 flex-wrap">
-                        <Badge>{r.tema}</Badge>
-                        <Badge variant="secondary">{r.subtema}</Badge>
-                        <Badge variant="outline">{r.produto}</Badge>
-                      </div>
+  const displayName = getDisplayName(user);
 
-                      <div className="flex items-center gap-1">
-                        <Button size="icon" variant="ghost" className="rounded-2xl" onClick={() => toggleFav(r.id)}>
-                          {r.favorito ? <Star className="h-4 w-4" /> : <StarOff className="h-4 w-4" />}
-                        </Button>
-
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button size="icon" variant="ghost" className="rounded-2xl" title="Mais">
-                              <MoreVertical className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => openEdit(r.id)}>
-                              <Pencil className="h-4 w-4 mr-2" /> Editar
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => remove(r.id)}>
-                              <Trash2 className="h-4 w-4 mr-2" /> Excluir
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
-                    </div>
-
-                    <div className="space-y-1">
-                      <h3 className="font-semibold">{r.assunto}</h3>
-                      <div className="text-xs text-muted-foreground flex flex-wrap gap-2">
-                        <span>Canal: {r.canal}</span>
-                        <span>•</span>
-                        <span>Status: {r.status}</span>
-                      </div>
-                    </div>
-
-                    <p className="text-sm text-muted-foreground">{clampText(r.resposta, 220)}</p>
-
-                    <div className="flex flex-wrap gap-1">
-                      {r.tags.slice(0, 6).map((t) => (
-                        <Badge key={t} variant="secondary" className="text-xs">
-                          {t}
-                        </Badge>
-                      ))}
-                      {r.tags.length > 6 ? (
-                        <Badge variant="secondary" className="text-xs">
-                          +{r.tags.length - 6}
-                        </Badge>
-                      ) : null}
-                    </div>
-
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="text-xs text-muted-foreground">Atualizado: {new Date(r.atualizadoEm).toLocaleString()}</div>
-                      <div className="flex gap-2">
-                        <Button variant="outline" className="rounded-2xl" onClick={() => copy(r.resposta)}>
-                          <Copy className="h-4 w-4 mr-2" /> Copiar
-                        </Button>
-                        <Button variant="outline" className="rounded-2xl" onClick={() => copy(makePrompt(r))}>
-                          <Sparkles className="h-4 w-4 mr-2" /> Prompt
-                        </Button>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            ))}
+  // ============================
+  // UI
+  // ============================
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-900">
+      <div className="mx-auto max-w-7xl px-4 py-6">
+        {/* HEADER */}
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-xl font-semibold">Dashboard de Respostas</h1>
+            <p className="text-sm text-slate-500">
+              Base de conhecimento para atendentes filtrarem por temas, assuntos e contexto.
+            </p>
           </div>
-        </TabsContent>
 
-        <TabsContent value="tabela" className="mt-0">
-          <Card className="rounded-2xl shadow-sm">
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[48px]">Fav</TableHead>
-                    <TableHead>Tema</TableHead>
-                    <TableHead>Subtema</TableHead>
-                    <TableHead>Assunto</TableHead>
-                    <TableHead>Produto</TableHead>
-                    <TableHead>Canal</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="w-[120px]">Ações</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {respostasFiltradas.map((r) => (
-                    <TableRow key={r.id}>
-                      <TableCell>
-                        <Button size="icon" variant="ghost" className="rounded-2xl" onClick={() => toggleFav(r.id)}>
-                          {r.favorito ? <Star className="h-4 w-4" /> : <StarOff className="h-4 w-4" />}
-                        </Button>
-                      </TableCell>
-                      <TableCell>
-                        <Badge>{r.tema}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="secondary">{r.subtema}</Badge>
-                      </TableCell>
-                      <TableCell className="font-medium">{r.assunto}</TableCell>
-                      <TableCell>{r.produto}</TableCell>
-                      <TableCell>{r.canal}</TableCell>
-                      <TableCell>{r.status}</TableCell>
-                      <TableCell>
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="outline" className="rounded-2xl" onClick={() => copy(r.resposta)}>
-                            <Copy className="h-4 w-4" />
-                          </Button>
-                          <Button size="sm" variant="outline" className="rounded-2xl" onClick={() => openEdit(r.id)}>
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button size="sm" variant="outline" className="rounded-2xl" onClick={() => remove(r.id)}>
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-slate-700">
+              Olá, <b>{displayName}</b>
+            </span>
 
-      <EditorDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        initial={editing}
-        onSave={(data) => {
-          setRespostas((prev) => {
-            if (editingId) {
-              return prev.map((r) => (r.id === editingId ? { ...r, ...data, atualizadoEm: new Date().toISOString() } : r))
-            }
-            const novo: Resposta = {
-              id: uuid(),
-              favorito: false,
-              atualizadoEm: new Date().toISOString(),
-              ...(data as any),
-            }
-            return [novo, ...prev]
-          })
-          setDialogOpen(false)
-        }}
-      />
+            <span
+              className={`text-xs px-2 py-1 rounded-full border ${
+                role === "admin"
+                  ? "bg-slate-900 text-white border-slate-900"
+                  : "bg-white text-slate-700"
+              }`}
+              title={user?.email ?? ""}
+            >
+              {roleLabel(role)}
+            </span>
+
+            {isAdmin && (
+              <button
+                onClick={async (e) => {
+                  e.preventDefault();
+                  setUsersOpen(true);
+                  await loadUsers();
+                }}
+                className="border rounded-md px-3 py-2 text-sm hover:bg-slate-50"
+              >
+                Usuários
+              </button>
+            )}
+
+            <button
+              onClick={async () => {
+                await supabase.auth.signOut();
+                setSession(null);
+                setRole("leitor");
+                setIsAdmin(false);
+                setCanWrite(false);
+                setCanFavorite(false);
+              }}
+              className="border rounded-md px-3 py-2 text-sm hover:bg-slate-50"
+            >
+              Sair
+            </button>
+
+            {canWrite && (
+              <button
+                onClick={abrirNovo}
+                className="rounded-md bg-slate-900 text-white px-4 py-2 text-sm"
+              >
+                + Nova resposta
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* STATS */}
+        <div className="grid grid-cols-5 gap-3 mb-6">
+          <CardStat label="Total" value={total} />
+          <CardStat label="Ativas" value={ativas} />
+          <CardStat label="Em revisão" value={revisao} />
+          <CardStat label="Arquivadas" value={arquivadas} />
+          <CardStat label="Favoritos" value={favoritas} />
+        </div>
+
+        {/* FILTROS */}
+        <div className="bg-white rounded-xl shadow p-4 mb-6">
+          <div className="grid grid-cols-5 gap-3">
+            <input
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder="Pesquisar tema, assunto, tags ou conteúdo da resposta..."
+              className="border rounded-md px-3 py-2 text-sm col-span-2"
+            />
+            <Select value={filtroTema} onChange={setFiltroTema} list={temas} />
+            <Select value={filtroSubtema} onChange={setFiltroSubtema} list={subtemas} />
+            <Select value={filtroProduto} onChange={setFiltroProduto} list={produtos} />
+            <Select value={filtroCanal} onChange={setFiltroCanal} list={canais} />
+            <Select value={filtroStatus} onChange={setFiltroStatus} list={statusList} />
+          </div>
+
+          <div className="flex items-center gap-4 mt-3">
+            <label className="text-sm">
+              <input
+                type="checkbox"
+                checked={somenteFavoritos}
+                onChange={(e) => setSomenteFavoritos(e.target.checked)}
+                className="mr-2"
+              />
+              Somente favoritos
+            </label>
+
+            <button onClick={reload} className="border rounded-md px-3 py-1 text-sm">
+              Recarregar
+            </button>
+
+            <span className="text-xs text-slate-500">Permissões: {permissoesLabel(role)}</span>
+          </div>
+        </div>
+
+        {/* LISTA */}
+        {loading ? (
+          <p>Carregando...</p>
+        ) : (
+          <div className="grid grid-cols-3 gap-4">
+            {filtradas.map((r) => {
+              const expanded = expandedId === r.id;
+              const menuOpen = openMenuId === r.id;
+              const resumo = r.resposta.length > 140 ? r.resposta.slice(0, 140) + "…" : r.resposta;
+
+              return (
+                <div
+                  key={r.id}
+                  className="bg-white rounded-xl shadow p-4 cursor-pointer hover:shadow-md transition"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleExpand(r.id);
+                  }}
+                >
+                  {/* Topo: badges + ações */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex flex-wrap gap-2">
+                      <Badge>{r.tema}</Badge>
+                      <Badge variant="light">{r.subtema}</Badge>
+                      <Badge variant="light">{r.produto}</Badge>
+                    </div>
+
+                    <div className="flex items-center gap-2 relative">
+                      {/* Favorito */}
+                      {canFavorite && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleFavorito(r);
+                          }}
+                          className="px-2 py-1 rounded hover:bg-slate-100"
+                          title={r.favorito ? "Desfavoritar" : "Favoritar"}
+                        >
+                          {r.favorito ? "⭐" : "☆"}
+                        </button>
+                      )}
+
+                      {/* Menu de ações */}
+                      {canWrite && (
+                        <>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleMenu(r.id);
+                            }}
+                            className="px-2 py-1 rounded hover:bg-slate-100"
+                            title="Ações"
+                          >
+                            ⋮
+                          </button>
+
+                          {menuOpen && (
+                            <div
+                              className="absolute right-0 top-9 w-40 bg-white border rounded-lg shadow-md overflow-hidden z-20"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <button
+                                className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                                onClick={() => {
+                                  setOpenMenuId(null);
+                                  abrirEditar(r);
+                                }}
+                              >
+                                Editar
+                              </button>
+
+                              {isAdmin && (
+                                <button
+                                  className="w-full text-left px-3 py-2 text-sm text-red-600 hover:bg-slate-50"
+                                  onClick={async () => {
+                                    setOpenMenuId(null);
+                                    await deleteResposta(r.id);
+                                  }}
+                                >
+                                  Excluir
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  <h3 className="font-semibold mt-3">{r.assunto}</h3>
+                  <p className="text-sm text-slate-500">
+                    Canal: {r.canal} &nbsp;•&nbsp; Status: {r.status}
+                  </p>
+
+                  <p className="mt-2 text-sm whitespace-pre-wrap text-slate-700">
+                    {expanded ? r.resposta : resumo}
+                  </p>
+
+                  {r.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {r.tags.map((t) => (
+                        <span key={t} className="text-xs bg-slate-100 px-2 py-1 rounded">
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between gap-3 mt-3">
+                    <p className="text-xs text-slate-400">
+                      Atualizado: {mounted ? new Date(r.atualizadoEm).toLocaleString() : ""}
+                    </p>
+
+                    <div className="flex gap-2">
+                      <button
+                        className="border rounded-full px-4 py-2 text-sm flex items-center gap-2 hover:bg-slate-50"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          copiarTexto(r.resposta);
+                        }}
+                      >
+                        📋 <span>Copiar</span>
+                      </button>
+
+                      <button
+                        className="border rounded-full px-4 py-2 text-sm flex items-center gap-2 hover:bg-slate-50"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          copiarPromptIA(r);
+                        }}
+                      >
+                        ✨ <span>Prompt</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* MODAL RESPOSTA */}
+      {dialogOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-40">
+          <div className="bg-white p-5 rounded-xl w-full max-w-[760px] shadow">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">
+                {editingId ? "Editar resposta" : "Nova resposta"}
+              </h2>
+
+              <button
+                className="text-sm px-3 py-1 rounded border hover:bg-slate-50"
+                onClick={() => {
+                  setDialogOpen(false);
+                  setEditingId(null);
+                }}
+              >
+                Fechar
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-slate-500">Tema</label>
+                <input
+                  value={form.tema}
+                  onChange={(e) => setForm({ ...form, tema: e.target.value })}
+                  className="border rounded-md p-2 w-full"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-slate-500">Subtema</label>
+                <input
+                  value={form.subtema}
+                  onChange={(e) => setForm({ ...form, subtema: e.target.value })}
+                  className="border rounded-md p-2 w-full"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-slate-500">Assunto</label>
+                <input
+                  value={form.assunto}
+                  onChange={(e) => setForm({ ...form, assunto: e.target.value })}
+                  className="border rounded-md p-2 w-full"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-slate-500">Produto</label>
+                <input
+                  value={form.produto}
+                  onChange={(e) => setForm({ ...form, produto: e.target.value })}
+                  className="border rounded-md p-2 w-full"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs text-slate-500">Canal</label>
+                <select
+                  value={form.canal}
+                  onChange={(e) => setForm({ ...form, canal: e.target.value })}
+                  className="border rounded-md p-2 w-full bg-white"
+                >
+                  <option value="">Selecione</option>
+                  <option value="Chat">Chat</option>
+                  <option value="WhatsApp">WhatsApp</option>
+                  <option value="E-mail">E-mail</option>
+                  <option value="Omnichannel">Omnichannel</option>
+                  <option value="Instagram">Instagram</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs text-slate-500">Status</label>
+                <select
+                  value={form.status}
+                  onChange={(e) => setForm({ ...form, status: e.target.value })}
+                  className="border rounded-md p-2 w-full bg-white"
+                >
+                  <option value="Ativa">Ativa</option>
+                  <option value="Em revisão">Em revisão</option>
+                  <option value="Arquivada">Arquivada</option>
+                </select>
+              </div>
+
+              <div className="col-span-2">
+                <label className="text-xs text-slate-500">Tags (separe por | )</label>
+                <input
+                  value={form.tags.join("|")}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      tags: e.target.value
+                        .split("|")
+                        .map((t) => t.trim())
+                        .filter(Boolean),
+                    })
+                  }
+                  className="border rounded-md p-2 w-full"
+                />
+              </div>
+
+              <div className="col-span-2">
+                <label className="text-xs text-slate-500">Resposta</label>
+                <textarea
+                  value={form.resposta}
+                  onChange={(e) => setForm({ ...form, resposta: e.target.value })}
+                  className="border rounded-md p-2 w-full min-h-[180px]"
+                />
+              </div>
+
+              <div className="col-span-2 flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={form.favorito}
+                  onChange={(e) => setForm({ ...form, favorito: e.target.checked })}
+                />
+                <span className="text-sm">Marcar como favorito</span>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                className="border rounded-md px-4 py-2 text-sm hover:bg-slate-50"
+                onClick={() => {
+                  setDialogOpen(false);
+                  setEditingId(null);
+                }}
+              >
+                Cancelar
+              </button>
+
+              <button
+                className="bg-slate-900 text-white rounded-md px-4 py-2 text-sm"
+                onClick={() => saveResposta(form)}
+              >
+                Salvar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL CADASTRO DE USUÁRIOS */}
+      {usersOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-40">
+          <div className="bg-white p-5 rounded-xl w-full max-w-[980px] shadow">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">Cadastro de Usuários</h2>
+              <button
+                className="text-sm px-3 py-1 rounded border hover:bg-slate-50"
+                onClick={() => setUsersOpen(false)}
+              >
+                Fechar
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <input
+                value={userSearch}
+                onChange={(e) => setUserSearch(e.target.value)}
+                placeholder="Buscar por nome, email, telefone ou nível..."
+                className="border rounded-md px-3 py-2 text-sm w-full"
+              />
+              <button
+                className="border rounded-md px-3 py-2 text-sm hover:bg-slate-50"
+                onClick={loadUsers}
+              >
+                Recarregar
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-500 mb-3">
+              Os usuários são criados manualmente no Supabase (Authentication → Users). Aqui você
+              ajusta Nome/Telefone/Nível.
+            </p>
+
+            {usersLoading ? (
+              <p className="text-sm text-slate-500">Carregando...</p>
+            ) : usersFiltered.length === 0 ? (
+              <p className="text-sm text-slate-500">Nenhum usuário encontrado.</p>
+            ) : (
+              <div className="border rounded-lg overflow-hidden">
+                <div className="grid grid-cols-12 bg-slate-50 text-xs text-slate-600 px-3 py-2">
+                  <div className="col-span-3">Nome</div>
+                  <div className="col-span-3">E-mail</div>
+                  <div className="col-span-2">Telefone</div>
+                  <div className="col-span-2">Nível</div>
+                  <div className="col-span-2 text-right">Ação</div>
+                </div>
+
+                {usersFiltered.map((u) => (
+                  <UserRowEditor
+                    key={u.user_id}
+                    row={u}
+                    disabledSelf={u.user_id === session?.user?.id}
+                    onChangeRow={(next) => {
+                      setUsersList((prev) =>
+                        prev.map((x) => (x.user_id === next.user_id ? next : x))
+                      );
+                    }}
+                    onSave={async (next) => {
+                      await saveUserProfile(next.user_id, next.nome, next.telefone);
+                      await updateUserRole(next.user_id, next.role);
+                      alert("Usuário atualizado!");
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
-  )
+  );
+}
+
+// ============================
+// COMPONENTS
+// ============================
+function CardStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="bg-white rounded-xl shadow p-4">
+      <p className="text-sm text-slate-500">{label}</p>
+      <p className="text-xl font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function Badge({ children, variant }: { children: React.ReactNode; variant?: "light" }) {
+  return (
+    <span
+      className={`text-xs px-2 py-1 rounded ${
+        variant === "light" ? "bg-slate-100 text-slate-700" : "bg-slate-900 text-white"
+      }`}
+    >
+      {children}
+    </span>
+  );
+}
+
+function Select({
+  value,
+  onChange,
+  list,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  list: string[];
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="border rounded-md px-3 py-2 text-sm bg-white"
+    >
+      {list.map((v) => (
+        <option key={v}>{v}</option>
+      ))}
+    </select>
+  );
+}
+
+function UserRowEditor({
+  row,
+  disabledSelf,
+  onChangeRow,
+  onSave,
+}: {
+  row: UserRow;
+  disabledSelf: boolean;
+  onChangeRow: (r: UserRow) => void;
+  onSave: (r: UserRow) => Promise<void>;
+}) {
+  const [saving, setSaving] = useState(false);
+
+  return (
+    <div className="grid grid-cols-12 px-3 py-2 text-sm border-t items-center gap-2">
+      <div className="col-span-3">
+        <input
+          className="border rounded-md px-2 py-1 text-sm w-full"
+          value={row.nome ?? ""}
+          onChange={(e) => onChangeRow({ ...row, nome: e.target.value })}
+          placeholder="Nome"
+        />
+      </div>
+
+      <div className="col-span-3 truncate" title={row.email}>
+        {row.email}
+      </div>
+
+      <div className="col-span-2">
+        <input
+          className="border rounded-md px-2 py-1 text-sm w-full"
+          value={row.telefone ?? ""}
+          onChange={(e) => onChangeRow({ ...row, telefone: e.target.value })}
+          placeholder="Telefone"
+        />
+      </div>
+
+      <div className="col-span-2">
+        <select
+          className="border rounded-md px-2 py-1 text-sm bg-white w-full"
+          value={row.role}
+          onChange={(e) => onChangeRow({ ...row, role: e.target.value as Role })}
+          disabled={disabledSelf}
+          title={disabledSelf ? "Você não pode alterar seu próprio nível aqui" : ""}
+        >
+          <option value="leitor">Operador</option>
+          <option value="supervisor">Supervisor</option>
+          <option value="admin">Administrador</option>
+        </select>
+      </div>
+
+      <div className="col-span-2 flex justify-end">
+        <button
+          className="border rounded-md px-3 py-1 text-sm hover:bg-slate-50 disabled:opacity-50"
+          disabled={saving}
+          onClick={async () => {
+            setSaving(true);
+            try {
+              await onSave(row);
+            } finally {
+              setSaving(false);
+            }
+          }}
+        >
+          {saving ? "Salvando..." : "Salvar"}
+        </button>
+      </div>
+    </div>
+  );
 }
