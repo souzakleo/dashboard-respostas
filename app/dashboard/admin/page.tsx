@@ -65,6 +65,7 @@ export default function AdminPage() {
 
   const [savingRoleId, setSavingRoleId] = useState<string | null>(null);
   const [savingInfoId, setSavingInfoId] = useState<string | null>(null);
+  const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
 
   const getAccessToken = useCallback(async () => {
     const { data } = await supabase.auth.getSession();
@@ -227,6 +228,42 @@ export default function AdminPage() {
     }
   }
 
+
+  async function deleteUser(userId: string) {
+    const authToken = await getAccessToken();
+    if (!authToken) return;
+
+    if (!confirm("Tem certeza que deseja excluir este usuário?")) return;
+
+    setDeletingUserId(userId);
+    try {
+      const res = await fetch("/api/admin/delete-user", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ user_id: userId }),
+      });
+
+      const data = (await res.json()) as ApiResult;
+      if (!res.ok || !data?.ok) {
+        alert(`Erro ao excluir usuário: ${data?.details ?? data?.error ?? "desconhecido"}`);
+        return;
+      }
+
+      setUsers((prev) => prev.filter((u) => u.user_id !== userId));
+      setDraftById((prev) => {
+        const next = { ...prev };
+        delete next[userId];
+        return next;
+      });
+      alert("Usuário excluído com sucesso.");
+    } finally {
+      setDeletingUserId(null);
+    }
+  }
+
   const visibleUsers = useMemo(() => filterAdminUsers(users, filter), [users, filter]);
 
   if (loading) return <div className="p-6">Carregando...</div>;
@@ -346,13 +383,22 @@ export default function AdminPage() {
                     </td>
                     <td className="p-2">{u.created_at ? new Date(u.created_at).toLocaleString() : "-"}</td>
                     <td className="p-2">
-                      <button
-                        className="border rounded-md px-2 py-1 hover:bg-slate-900 hover:text-white disabled:opacity-50"
-                        disabled={savingInfoId === u.user_id}
-                        onClick={() => updateUserInfo(u.user_id)}
-                      >
-                        {savingInfoId === u.user_id ? "Salvando..." : "Salvar"}
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          className="border rounded-md px-2 py-1 hover:bg-slate-900 hover:text-white disabled:opacity-50"
+                          disabled={savingInfoId === u.user_id}
+                          onClick={() => updateUserInfo(u.user_id)}
+                        >
+                          {savingInfoId === u.user_id ? "Salvando..." : "Salvar"}
+                        </button>
+                        <button
+                          className="border rounded-md px-2 py-1 border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-50"
+                          disabled={deletingUserId === u.user_id}
+                          onClick={() => deleteUser(u.user_id)}
+                        >
+                          {deletingUserId === u.user_id ? "Excluindo..." : "Excluir"}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
