@@ -168,7 +168,82 @@ export default function AdminPage() {
     }
   }
 
-  const visibleUsers = useMemo(() => {
+  const filteredUsers = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return users;
+
+    return users.filter((u) => {
+      const text = `${u.nome} ${u.email} ${u.telefone} ${u.role}`.toLowerCase();
+      return text.includes(q);
+    });
+  }, [users, filter]);
+
+  async function createUser() {
+    if (!token) return;
+
+    setFormLoading(true);
+    try {
+      const res = await fetch("/api/admin/create-user", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          email,
+          nome,
+          telefone,
+          role,
+          password,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data?.ok) {
+        alert(`Erro ao criar usuário: ${data?.details ?? data?.error ?? "desconhecido"}`);
+        return;
+      }
+
+      setEmail("");
+      setNome("");
+      setTelefone("");
+      setRole("leitor");
+      setPassword("");
+
+      await loadUsers(token);
+      alert("Usuário criado com sucesso.");
+    } finally {
+      setFormLoading(false);
+    }
+  }
+
+  async function updateUserRole(userId: string, nextRole: Role) {
+    if (!token) return;
+    setSavingRoleId(userId);
+
+    try {
+      const res = await fetch("/api/admin/set-role", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ user_id: userId, role: nextRole }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data?.ok) {
+        alert(`Erro ao atualizar perfil: ${data?.details ?? data?.error ?? "desconhecido"}`);
+        return;
+      }
+
+      setUsers((prev) => prev.map((u) => (u.user_id === userId ? { ...u, role: nextRole } : u)));
+    } finally {
+      setSavingRoleId(null);
+    }
+  }
+
+  const filteredUsers = useMemo(() => {
     const q = filter.trim().toLowerCase();
     if (!q) return users;
 
@@ -250,7 +325,7 @@ export default function AdminPage() {
               </tr>
             </thead>
             <tbody>
-              {visibleUsers.map((u) => (
+              {filteredUsers.map((u) => (
                 <tr key={u.user_id} className="border-b">
                   <td className="p-2">{u.nome || "-"}</td>
                   <td className="p-2">{u.email || "-"}</td>
@@ -271,7 +346,7 @@ export default function AdminPage() {
                 </tr>
               ))}
 
-              {!visibleUsers.length && (
+              {!filteredUsers.length && (
                 <tr>
                   <td className="p-3 text-slate-500" colSpan={5}>
                     Nenhum usuário encontrado.
