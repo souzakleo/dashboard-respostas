@@ -3,8 +3,20 @@ import { createClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
 
+type ProfileRoleRow = {
+  role?: string | null;
+  perfil?: string | null;
+  tipo?: string | null;
+};
+
 function json(status: number, body: unknown) {
   return NextResponse.json(body, { status });
+}
+
+function isAdminRole(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase() === "admin";
 }
 
 export async function POST(req: Request) {
@@ -45,7 +57,20 @@ export async function POST(req: Request) {
     .eq("user_id", me.user.id)
     .maybeSingle();
 
-  let isAdmin = roleRow?.role === "admin";
+  let isAdmin = isAdminRole(roleRow?.role);
+
+  if (!isAdmin) {
+    const { data: profileRow } = await supabaseUser
+      .from("user_profiles")
+      .select("role,perfil,tipo")
+      .eq("user_id", me.user.id)
+      .maybeSingle<ProfileRoleRow>();
+
+    isAdmin =
+      isAdminRole(profileRow?.role) ||
+      isAdminRole(profileRow?.perfil) ||
+      isAdminRole(profileRow?.tipo);
+  }
 
   if (!isAdmin) {
     const { data: rpcAdmin, error: adminErr } = await supabaseUser.rpc("is_admin", {
