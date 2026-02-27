@@ -3,8 +3,6 @@ import { createClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
 
-type Role = "admin" | "supervisor" | "leitor";
-
 function json(status: number, body: unknown) {
   return NextResponse.json(body, { status });
 }
@@ -23,12 +21,10 @@ export async function POST(req: Request) {
 
   const body = await req.json().catch(() => ({}));
   const userId = String(body?.user_id ?? "").trim();
-  const role = String(body?.role ?? "").trim() as Role;
+  const nome = String(body?.nome ?? "").trim();
+  const telefone = String(body?.telefone ?? "").trim();
 
   if (!userId) return json(400, { ok: false, error: "missing_user_id" });
-  if (!(["admin", "supervisor", "leitor"] as Role[]).includes(role)) {
-    return json(400, { ok: false, error: "invalid_role" });
-  }
 
   const supabaseUser = createClient(supabaseUrl, anonKey, {
     global: { headers: { Authorization: authHeader } },
@@ -79,16 +75,29 @@ export async function POST(req: Request) {
 
   const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
 
-  const { error: roleErr } = await supabaseAdmin.rpc("set_user_role", {
+  const { error: profileErr } = await supabaseAdmin.rpc("upsert_user_profile", {
     p_user_id: userId,
-    p_role: role,
+    p_nome: nome,
+    p_telefone: telefone,
   });
 
-  if (roleErr) {
+  if (profileErr) {
     return json(500, {
       ok: false,
-      error: "set_role_failed",
-      details: roleErr.message,
+      error: "update_profile_failed",
+      details: profileErr.message,
+    });
+  }
+
+  const { error: metaErr } = await supabaseAdmin.auth.admin.updateUserById(userId, {
+    user_metadata: { nome, telefone },
+  });
+
+  if (metaErr) {
+    return json(500, {
+      ok: false,
+      error: "update_metadata_failed",
+      details: metaErr.message,
     });
   }
 

@@ -43,16 +43,36 @@ export async function GET(req: Request) {
     });
   }
 
-  const { data: isAdmin, error: adminErr } = await supabaseUser.rpc("is_admin", {
-    p_user_id: me.user.id,
-  });
+  const { data: roleRow, error: roleCheckErr } = await supabaseUser
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", me.user.id)
+    .maybeSingle();
 
-  if (adminErr) {
-    return json(500, {
-      ok: false,
-      error: "admin_check_failed",
-      details: adminErr.message,
+  let isAdmin = roleRow?.role === "admin";
+
+  if (!isAdmin) {
+    const { data: rpcAdmin, error: adminErr } = await supabaseUser.rpc("is_admin", {
+      p_user_id: me.user.id,
     });
+
+    if (adminErr && roleCheckErr) {
+      return json(500, {
+        ok: false,
+        error: "admin_check_failed",
+        details: `${roleCheckErr.message} | ${adminErr.message}`,
+      });
+    }
+
+    if (adminErr && !roleCheckErr) {
+      return json(500, {
+        ok: false,
+        error: "admin_check_failed",
+        details: adminErr.message,
+      });
+    }
+
+    isAdmin = !!rpcAdmin;
   }
 
   if (!isAdmin) return json(403, { ok: false, error: "not_admin" });
@@ -88,24 +108,11 @@ export async function GET(req: Request) {
       supabaseAdmin.from("user_roles").select("user_id,role").in("user_id", ids),
     ]);
 
-    if (profileErr) {
-      return json(500, {
-        ok: false,
-        error: "profiles_failed",
-        details: profileErr.message,
-      });
-    }
+    if (profileErr) return json(500, { ok: false, error: "profiles_failed", details: profileErr.message });
+    if (roleErr) return json(500, { ok: false, error: "roles_failed", details: roleErr.message });
 
-    if (roleErr) {
-      return json(500, {
-        ok: false,
-        error: "roles_failed",
-        details: roleErr.message,
-      });
-    }
-
-    const profileById = new Map((profiles ?? []).map((p: any) => [String(p.user_id), p]));
-    const roleById = new Map((roles ?? []).map((r: any) => [String(r.user_id), r]));
+    const profileById = new Map((profiles ?? []).map((p) => [String(p.user_id), p]));
+    const roleById = new Map((roles ?? []).map((r) => [String(r.user_id), r]));
 
     for (const u of batch) {
       const pid = String(u.id);

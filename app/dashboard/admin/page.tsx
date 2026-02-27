@@ -15,6 +15,11 @@ type AdminUser = {
   created_at: string;
 };
 
+type UserDraft = {
+  nome: string;
+  telefone: string;
+};
+
 const REDIRECT_PATH = "/dashboard/respostas";
 
 function normalizeRole(input: unknown): Role {
@@ -48,6 +53,7 @@ export default function AdminPage() {
 
   const [listLoading, setListLoading] = useState(false);
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [draftById, setDraftById] = useState<Record<string, UserDraft>>({});
   const [filter, setFilter] = useState("");
 
   const [formLoading, setFormLoading] = useState(false);
@@ -58,6 +64,7 @@ export default function AdminPage() {
   const [password, setPassword] = useState("");
 
   const [savingRoleId, setSavingRoleId] = useState<string | null>(null);
+  const [savingInfoId, setSavingInfoId] = useState<string | null>(null);
 
   const getAccessToken = useCallback(async () => {
     const { data } = await supabase.auth.getSession();
@@ -81,7 +88,19 @@ export default function AdminPage() {
         return;
       }
 
-      setUsers(data.users ?? []);
+      const loadedUsers = data.users ?? [];
+      setUsers(loadedUsers);
+      setDraftById(
+        Object.fromEntries(
+          loadedUsers.map((u) => [
+            u.user_id,
+            {
+              nome: u.nome ?? "",
+              telefone: u.telefone ?? "",
+            },
+          ])
+        )
+      );
     } finally {
       setListLoading(false);
     }
@@ -178,6 +197,36 @@ export default function AdminPage() {
     }
   }
 
+  async function updateUserInfo(userId: string) {
+    const authToken = await getAccessToken();
+    if (!authToken) return;
+
+    const draft = draftById[userId] ?? { nome: "", telefone: "" };
+
+    setSavingInfoId(userId);
+    try {
+      const res = await fetch("/api/admin/update-user", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ user_id: userId, nome: draft.nome, telefone: draft.telefone }),
+      });
+
+      const data = (await res.json()) as ApiResult;
+      if (!res.ok || !data?.ok) {
+        alert(`Erro ao atualizar usuário: ${data?.details ?? data?.error ?? "desconhecido"}`);
+        return;
+      }
+
+      setUsers((prev) => prev.map((u) => (u.user_id === userId ? { ...u, nome: draft.nome, telefone: draft.telefone } : u)));
+      alert("Dados do usuário atualizados.");
+    } finally {
+      setSavingInfoId(null);
+    }
+  }
+
   const visibleUsers = useMemo(() => filterAdminUsers(users, filter), [users, filter]);
 
   if (loading) return <div className="p-6">Carregando...</div>;
@@ -249,33 +298,69 @@ export default function AdminPage() {
                 <th className="text-left p-2">Telefone</th>
                 <th className="text-left p-2">Perfil</th>
                 <th className="text-left p-2">Criado em</th>
+                <th className="text-left p-2">Ações</th>
               </tr>
             </thead>
             <tbody>
-              {visibleUsers.map((u) => (
-                <tr key={u.user_id} className="border-b">
-                  <td className="p-2">{u.nome || "-"}</td>
-                  <td className="p-2">{u.email || "-"}</td>
-                  <td className="p-2">{u.telefone || "-"}</td>
-                  <td className="p-2">
-                    <select
-                      className="border rounded-md p-1 bg-white"
-                      value={u.role}
-                      disabled={savingRoleId === u.user_id}
-                      onChange={(e) => updateUserRole(u.user_id, e.target.value as Role)}
-                    >
-                      <option value="leitor">Leitor</option>
-                      <option value="supervisor">Supervisor</option>
-                      <option value="admin">Admin</option>
-                    </select>
-                  </td>
-                  <td className="p-2">{u.created_at ? new Date(u.created_at).toLocaleString() : "-"}</td>
-                </tr>
-              ))}
+              {visibleUsers.map((u) => {
+                const draft = draftById[u.user_id] ?? { nome: u.nome ?? "", telefone: u.telefone ?? "" };
+
+                return (
+                  <tr key={u.user_id} className="border-b">
+                    <td className="p-2">
+                      <input
+                        className="border rounded-md p-1 w-full"
+                        value={draft.nome}
+                        onChange={(e) =>
+                          setDraftById((prev) => ({
+                            ...prev,
+                            [u.user_id]: { ...draft, nome: e.target.value },
+                          }))
+                        }
+                      />
+                    </td>
+                    <td className="p-2">{u.email || "-"}</td>
+                    <td className="p-2">
+                      <input
+                        className="border rounded-md p-1 w-full"
+                        value={draft.telefone}
+                        onChange={(e) =>
+                          setDraftById((prev) => ({
+                            ...prev,
+                            [u.user_id]: { ...draft, telefone: e.target.value },
+                          }))
+                        }
+                      />
+                    </td>
+                    <td className="p-2">
+                      <select
+                        className="border rounded-md p-1 bg-white"
+                        value={u.role}
+                        disabled={savingRoleId === u.user_id}
+                        onChange={(e) => updateUserRole(u.user_id, e.target.value as Role)}
+                      >
+                        <option value="leitor">Leitor</option>
+                        <option value="supervisor">Supervisor</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    </td>
+                    <td className="p-2">{u.created_at ? new Date(u.created_at).toLocaleString() : "-"}</td>
+                    <td className="p-2">
+                      <button
+                        className="border rounded-md px-2 py-1 hover:bg-slate-900 hover:text-white disabled:opacity-50"
+                        disabled={savingInfoId === u.user_id}
+                        onClick={() => updateUserInfo(u.user_id)}
+                      >
+                        {savingInfoId === u.user_id ? "Salvando..." : "Salvar"}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
 
               {!visibleUsers.length && (
                 <tr>
-                  <td className="p-3 text-slate-500" colSpan={5}>
+                  <td className="p-3 text-slate-500" colSpan={6}>
                     Nenhum usuário encontrado.
                   </td>
                 </tr>
