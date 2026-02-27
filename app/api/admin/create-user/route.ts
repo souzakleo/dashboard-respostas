@@ -116,14 +116,38 @@ export async function POST(req: Request) {
       p_telefone: telefone,
     });
 
-    if (profErr) return json(500, { ok: false, error: "profile_failed", details: profErr.message });
+    if (profErr) {
+      const { error: profileUpsertErr } = await supabaseAdmin
+        .from("user_profiles")
+        .upsert({ user_id: newUserId, nome, telefone }, { onConflict: "user_id" });
+
+      if (profileUpsertErr) {
+        return json(500, {
+          ok: false,
+          error: "profile_failed",
+          details: `${profErr.message} | fallback: ${profileUpsertErr.message}`,
+        });
+      }
+    }
 
     const { error: roleErr } = await supabaseAdmin.rpc("set_user_role", {
       p_user_id: newUserId,
       p_role: role,
     });
 
-    if (roleErr) return json(500, { ok: false, error: "set_role_failed", details: roleErr.message });
+    if (roleErr) {
+      const { error: roleUpsertErr } = await supabaseAdmin
+        .from("user_roles")
+        .upsert({ user_id: newUserId, role }, { onConflict: "user_id" });
+
+      if (roleUpsertErr) {
+        return json(500, {
+          ok: false,
+          error: "set_role_failed",
+          details: `${roleErr.message} | fallback: ${roleUpsertErr.message}`,
+        });
+      }
+    }
 
     return json(200, { ok: true, user_id: newUserId });
   } catch (e: unknown) {

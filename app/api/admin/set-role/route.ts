@@ -85,11 +85,17 @@ export async function POST(req: Request) {
   });
 
   if (roleErr) {
-    return json(500, {
-      ok: false,
-      error: "set_role_failed",
-      details: roleErr.message,
-    });
+    const { error: roleUpsertErr } = await supabaseAdmin
+      .from("user_roles")
+      .upsert({ user_id: userId, role }, { onConflict: "user_id" });
+
+    if (roleUpsertErr) {
+      return json(500, {
+        ok: false,
+        error: "set_role_failed",
+        details: `${roleErr.message} | fallback: ${roleUpsertErr.message}`,
+      });
+    }
   }
 
   return json(200, { ok: true });

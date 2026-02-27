@@ -107,11 +107,17 @@ export async function POST(req: Request) {
   });
 
   if (profileErr) {
-    return json(500, {
-      ok: false,
-      error: "update_profile_failed",
-      details: profileErr.message,
-    });
+    const { error: profileUpsertErr } = await supabaseAdmin
+      .from("user_profiles")
+      .upsert({ user_id: userId, nome, telefone }, { onConflict: "user_id" });
+
+    if (profileUpsertErr) {
+      return json(500, {
+        ok: false,
+        error: "update_profile_failed",
+        details: `${profileErr.message} | fallback: ${profileUpsertErr.message}`,
+      });
+    }
   }
 
   const { error: metaErr } = await supabaseAdmin.auth.admin.updateUserById(userId, {
