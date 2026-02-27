@@ -15,6 +15,14 @@ type AdminUser = {
   created_at: string;
 };
 
+const REDIRECT_PATH = "/dashboard/respostas";
+
+function normalizeRole(input: unknown): Role {
+  const value = String(input ?? "").toLowerCase();
+  if (value === "admin" || value === "supervisor" || value === "leitor") return value as Role;
+  return "leitor";
+}
+
 type ApiResult = {
   ok?: boolean;
   error?: string;
@@ -76,15 +84,15 @@ export default function AdminPage() {
       const user = session?.user;
 
       if (!user) {
-        router.push("/dashboard/respostas");
+        router.push(REDIRECT_PATH);
         return;
       }
 
       const { data: roleRow } = await supabase.from("user_roles").select("role").eq("user_id", user.id).maybeSingle();
 
-      const currentRole = (roleRow?.role ?? "leitor") as Role;
+      const currentRole = normalizeRole(roleRow?.role);
       if (currentRole !== "admin") {
-        router.push("/dashboard/respostas");
+        router.push(REDIRECT_PATH);
         return;
       }
 
