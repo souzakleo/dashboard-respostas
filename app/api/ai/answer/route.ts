@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import OpenAI from "openai";
 
 export async function POST(req: Request) {
   try {
@@ -15,24 +14,39 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "OPENAI_API_KEY não configurada" }, { status: 500 });
     }
 
-    const client = new OpenAI({ apiKey });
-
-    const completion = await client.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0.2,
-      messages: [
-        {
-          role: "system",
-          content:
-            "Você é um atendente do Detran. Seja direto, correto e não invente informação. Se faltar dado, faça 1 pergunta objetiva.",
-        },
-        { role: "user", content: prompt },
-      ],
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        temperature: 0.2,
+        messages: [
+          {
+            role: "system",
+            content:
+              "Você é um atendente do Detran. Seja direto, correto e não invente informação. Se faltar dado, faça 1 pergunta objetiva.",
+          },
+          { role: "user", content: prompt },
+        ],
+      }),
     });
 
-    const answer = completion.choices?.[0]?.message?.content ?? "";
+    const payload = (await response.json().catch(() => ({}))) as {
+      error?: { message?: string };
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+
+    if (!response.ok) {
+      return NextResponse.json({ error: payload?.error?.message ?? "Falha ao gerar resposta" }, { status: response.status });
+    }
+
+    const answer = payload.choices?.[0]?.message?.content ?? "";
     return NextResponse.json({ answer });
-  } catch (e: any) {
-    return NextResponse.json({ error: e?.message ?? "Falha" }, { status: 500 });
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Falha";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

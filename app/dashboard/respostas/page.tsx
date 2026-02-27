@@ -139,7 +139,7 @@ export default function Page() {
   const [session, setSession] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
 
-  // role/permissões (via user_profiles)
+  // role/permissões (preferência: user_roles; fallback: user_profiles)
   const [role, setRole] = useState<Role>("leitor");
   const [roleLoading, setRoleLoading] = useState(true);
 
@@ -154,6 +154,7 @@ export default function Page() {
   // dados
   const [respostas, setRespostas] = useState<Resposta[]>([]);
   const [loading, setLoading] = useState(false);
+  const [lastReloadAt, setLastReloadAt] = useState<string | null>(null);
 
   // filtros
   const [busca, setBusca] = useState("");
@@ -247,7 +248,7 @@ export default function Page() {
   }, []);
 
   // ============================
-  // Load role from user_profiles
+  // Load role (user_roles -> fallback user_profiles)
   // ============================
   useEffect(() => {
     (async () => {
@@ -260,18 +261,29 @@ export default function Page() {
       setRoleLoading(true);
       const uid = session.user.id;
 
-      const { data, error } = await supabase
+      const { data: roleRow, error: roleErr } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", uid)
+        .maybeSingle();
+
+      if (!roleErr && roleRow?.role) {
+        setRole(roleRow.role as Role);
+        setRoleLoading(false);
+        return;
+      }
+
+      const { data: profileRow, error: profileErr } = await supabase
         .from("user_profiles")
         .select("role")
         .eq("user_id", uid)
         .maybeSingle();
 
-      if (error) {
-        console.error("Erro ao carregar role (user_profiles):", error);
+      if (profileErr) {
+        console.error("Erro ao carregar role (user_roles/user_profiles):", profileErr);
         setRole("leitor");
       } else {
-        const r = (data?.role ?? "leitor") as Role;
-        setRole(r);
+        setRole((profileRow?.role ?? "leitor") as Role);
       }
 
       setRoleLoading(false);
@@ -319,6 +331,7 @@ export default function Page() {
       }
 
       setRespostas((data ?? []).map(dbToResposta));
+      setLastReloadAt(new Date().toISOString());
     } finally {
       setLoading(false);
     }
@@ -612,6 +625,9 @@ export default function Page() {
           <div>
             <h1 className="text-xl font-semibold">Dashboard de Respostas</h1>
             <p className="text-sm text-slate-500">Base de conhecimento para atendentes filtrarem por temas, assuntos e contexto.</p>
+            <p className="text-xs text-slate-400 mt-1">
+              Última atualização: {mounted && lastReloadAt ? new Date(lastReloadAt).toLocaleString() : "--"}
+            </p>
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
@@ -622,6 +638,14 @@ export default function Page() {
             <span className="text-xs px-2 py-1 rounded-full border bg-white text-slate-700">
               {roleLoading ? "Carregando..." : roleLabel(role)}
             </span>
+
+            <button
+              onClick={reload}
+              disabled={loading}
+              className="border rounded-md px-3 py-2 text-sm transition-colors bg-white hover:bg-slate-900 hover:text-white disabled:opacity-50 disabled:hover:bg-white disabled:hover:text-slate-900"
+            >
+              {loading ? "Atualizando..." : "Atualizar"}
+            </button>
 
             <button
               onClick={async () => {
@@ -808,8 +832,8 @@ export default function Page() {
 
                     {r.tags.length > 0 && (
                       <div className="flex flex-wrap gap-2 mt-2">
-                        {r.tags.map((t) => (
-                          <span key={t} className="text-xs bg-slate-100 px-2 py-1 rounded">
+                        {r.tags.map((t, idx) => (
+                          <span key={`${r.id}-${t}-${idx}`} className="text-xs bg-slate-100 px-2 py-1 rounded">
                             {t}
                           </span>
                         ))}
