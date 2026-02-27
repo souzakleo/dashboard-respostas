@@ -168,10 +168,13 @@ export default function Page() {
   const [page, setPage] = useState(1);
   const pageSize = 12;
 
+  // expand (ler mais)
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
   // menu 3 pontos
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
-  // modal de criar/editar
+  // modal
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -190,10 +193,6 @@ export default function Page() {
   // tags input
   const [tagsText, setTagsText] = useState("");
 
-  // modal de leitura (janela)
-  const [viewOpen, setViewOpen] = useState(false);
-  const [viewItem, setViewItem] = useState<Resposta | null>(null);
-
   // CSV
   const [csvLoading, setCsvLoading] = useState(false);
   const [csvMsg, setCsvMsg] = useState<string | null>(null);
@@ -211,14 +210,10 @@ export default function Page() {
 
   useEffect(() => setMounted(true), []);
 
-  // fechar menus/modais ao clicar fora / ESC
+  // fechar menu ao clicar fora / ESC
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        setOpenMenuId(null);
-        setViewOpen(false);
-        setViewItem(null);
-      }
+      if (e.key === "Escape") setOpenMenuId(null);
     }
     function onClick() {
       setOpenMenuId(null);
@@ -403,6 +398,7 @@ export default function Page() {
 
     setDialogOpen(false);
     setEditingId(null);
+    setExpandedId(null);
     await reload();
   }
 
@@ -556,17 +552,6 @@ export default function Page() {
     openInNewTab(GEMINI_URL);
   }
 
-  function abrirLeitura(r: Resposta) {
-    setViewItem(r);
-    setViewOpen(true);
-  }
-
-  function fecharLeitura() {
-    setViewOpen(false);
-    // pequena espera para a animação “sumir” antes de remover o item
-    window.setTimeout(() => setViewItem(null), 120);
-  }
-
   // ============================
   // LOGIN SCREEN
   // ============================
@@ -610,9 +595,8 @@ export default function Page() {
   // ============================
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
-      {/* TOAST */}
       {toast && (
-        <div className="fixed top-4 right-4 z-[70]">
+        <div className="fixed top-4 right-4 z-[60]">
           <div
             className={`px-4 py-3 rounded-lg shadow border text-sm ${
               toast.type === "success" ? "bg-white text-slate-900" : "bg-white text-red-700"
@@ -733,6 +717,7 @@ export default function Page() {
           <>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {pageItems.map((r) => {
+                const expanded = expandedId === r.id;
                 const resumo = clampText(r.resposta, 220);
                 const menuOpen = openMenuId === r.id;
 
@@ -803,15 +788,22 @@ export default function Page() {
                       Canal: {r.canal} • Status: {r.status}
                     </p>
 
-                    {/* CLIQUE ABRE MODAL DE LEITURA */}
+                    {/* EXPANDIR COM ANIMAÇÃO */}
                     <button
                       type="button"
                       className="mt-2 w-full text-left"
-                      onClick={() => abrirLeitura(r)}
-                      title="Clique para abrir"
+                      onClick={() => setExpandedId((prev) => (prev === r.id ? null : r.id))}
+                      title="Clique para expandir/recolher"
                     >
-                      <div className="text-sm whitespace-pre-wrap text-slate-700">{resumo}</div>
-                      {r.resposta.length > 220 && <div className="mt-1 text-xs text-slate-500">Clique para abrir</div>}
+                      <div
+                        className={`text-sm whitespace-pre-wrap text-slate-700 transition-all duration-300 ease-in-out overflow-hidden ${
+                          expanded ? "max-h-[520px] opacity-100" : "max-h-[96px] opacity-90"
+                        }`}
+                      >
+                        {expanded ? r.resposta : resumo}
+                      </div>
+
+                      {!expanded && r.resposta.length > 220 && <div className="mt-1 text-xs text-slate-500">Clique para ler mais</div>}
                     </button>
 
                     {r.tags.length > 0 && (
@@ -836,11 +828,11 @@ export default function Page() {
                           Copiar prompt
                         </button>
 
-                        <button className={btnBase} onClick={() => gerarComGPT(r)} title="Abrir ChatGPT">
+                        <button className={btnBase} onClick={() => gerarComGPT(r)} title="Abrir o ChatGPT">
                           Gerar com GPT
                         </button>
 
-                        <button className={btnBase} onClick={() => gerarComGemini(r)} title="Abrir Gemini">
+                        <button className={btnBase} onClick={() => gerarComGemini(r)} title="Abrir o Gemini">
                           Gerar com Gemini
                         </button>
                       </div>
@@ -875,7 +867,6 @@ export default function Page() {
           </>
         )}
 
-        {/* MODAL: CRIAR/EDITAR */}
         {dialogOpen && (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center px-4 z-40">
             <div className="bg-white p-5 rounded-xl w-full max-w-[760px] shadow">
@@ -977,96 +968,6 @@ export default function Page() {
                 </button>
               </div>
             </div>
-          </div>
-        )}
-
-        {/* MODAL: LEITURA (JANELA) */}
-        {viewOpen && viewItem && (
-          <div
-            className="fixed inset-0 bg-black/60 flex items-center justify-center px-4 z-50"
-            onClick={() => fecharLeitura()}
-          >
-            <div
-              className="bg-white w-full max-w-3xl rounded-2xl shadow-xl p-5 md:p-6 relative
-                         transition-all duration-200 ease-out
-                         animate-[popup_.18s_ease-out]"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="flex items-start justify-between gap-3 mb-3">
-                <div>
-                  <div className="flex flex-wrap gap-2 mb-2">
-                    <Badge>{viewItem.tema}</Badge>
-                    <Badge variant="light">{viewItem.subtema}</Badge>
-                    <Badge variant="light">{viewItem.produto}</Badge>
-                  </div>
-
-                  <h2 className="text-lg font-semibold">{viewItem.assunto}</h2>
-                  <div className="text-sm text-slate-500">
-                    Canal: {viewItem.canal} • Status: {viewItem.status}
-                  </div>
-                </div>
-
-                <button
-                  className="border rounded-md px-3 py-2 text-sm transition-colors bg-white hover:bg-slate-900 hover:text-white"
-                  onClick={() => fecharLeitura()}
-                >
-                  Fechar
-                </button>
-              </div>
-
-              <div className="border rounded-xl p-4 bg-slate-50 whitespace-pre-wrap text-sm text-slate-800 max-h-[60vh] overflow-auto">
-                {viewItem.resposta}
-              </div>
-
-              {viewItem.tags.length > 0 && (
-                <div className="flex flex-wrap gap-2 mt-3">
-                  {viewItem.tags.map((t) => (
-                    <span key={t} className="text-xs bg-slate-100 px-2 py-1 rounded">
-                      {t}
-                    </span>
-                  ))}
-                </div>
-              )}
-
-              <div className="flex items-center justify-between gap-3 mt-4 flex-wrap">
-                <div className="text-xs text-slate-500">
-                  Atualizado: {mounted ? new Date(viewItem.atualizadoEm).toLocaleString() : ""}
-                </div>
-
-                <div className="flex gap-2 flex-wrap">
-                  <button className={btnBase} onClick={() => copiarResposta(viewItem)}>
-                    Copiar resposta
-                  </button>
-
-                  <button className={btnBase} onClick={() => copiarPrompt(viewItem)}>
-                    Copiar prompt
-                  </button>
-
-                  <button className={btnBase} onClick={() => gerarComGPT(viewItem)}>
-                    Gerar com GPT
-                  </button>
-
-                  <button className={btnBase} onClick={() => gerarComGemini(viewItem)}>
-                    Gerar com Gemini
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* keyframes inline via tailwind arbitrary animation.
-                Se seu Tailwind não suportar animate-[...], eu te passo alternativa. */}
-            <style jsx global>{`
-              @keyframes popup {
-                from {
-                  opacity: 0;
-                  transform: translateY(10px) scale(0.98);
-                }
-                to {
-                  opacity: 1;
-                  transform: translateY(0) scale(1);
-                }
-              }
-            `}</style>
           </div>
         )}
       </div>
