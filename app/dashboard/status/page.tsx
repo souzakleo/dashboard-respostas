@@ -191,8 +191,8 @@ export default function StatusPage() {
 
   async function loadMe() {
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const uid = sessionData.session?.user?.id ?? null;
+      const { data } = await supabase.auth.getUser();
+      const uid = data?.user?.id ?? null;
       setUserId(uid);
 
       if (!uid) {
@@ -491,14 +491,19 @@ useEffect(() => {
             ))}
           </select>
 
-          {!roleLoading && (role === "admin" || role === "supervisor" || role === "operador") && (
-            <button
-              onClick={openCreate}
-              className="rounded-md bg-black text-white px-3 py-1.5 text-sm hover:opacity-90"
-            >
-              Novo Status
-            </button>
-          )}
+          {userId && (
+  <>
+    {!roleLoading && (role === "admin" || role === "supervisor" || role === "operador") && (
+      <button
+        onClick={openCreate}
+        className="rounded-md bg-black text-white px-3 py-1.5 text-sm hover:opacity-90"
+      >
+        Novo Status
+      </button>
+    )}
+
+  </>
+)}
         </div>
       </div>
 
