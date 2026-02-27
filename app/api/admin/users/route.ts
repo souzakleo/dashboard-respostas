@@ -84,7 +84,10 @@ export async function GET(req: Request) {
   const perPage = 200;
 
   while (true) {
-    const { data, error } = await supabaseAdmin.auth.admin.listUsers({ page, perPage });
+    const { data, error } = await supabaseAdmin.auth.admin.listUsers({
+      page,
+      perPage,
+    });
 
     if (error) {
       return json(500, {
@@ -95,6 +98,7 @@ export async function GET(req: Request) {
     }
 
     const batch = data.users ?? [];
+
     if (!batch.length) break;
 
     const ids = batch.map((u) => u.id);
@@ -114,7 +118,6 @@ export async function GET(req: Request) {
       const pid = String(u.id);
       const profile = profileById.get(pid);
       const roleItem = roleById.get(pid);
-
       users.push({
         user_id: pid,
         email: String(u.email ?? ""),
@@ -130,5 +133,6 @@ export async function GET(req: Request) {
   }
 
   users.sort((a, b) => b.created_at.localeCompare(a.created_at));
+
   return json(200, { ok: true, users });
 }
