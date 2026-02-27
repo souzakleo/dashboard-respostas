@@ -200,9 +200,23 @@ export default function StatusPage() {
         return;
       }
 
-      const me = await supabase.from("user_profiles").select("role").eq("user_id", uid).maybeSingle();
-      const r = normalizeRole(me.data?.role ?? "operador");
-      setRole(r);
+      const { data: roleTableRow } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", uid)
+        .maybeSingle();
+
+      const { data: profileRow } = await supabase
+        .from("user_profiles")
+        .select("role,perfil,tipo")
+        .eq("user_id", uid)
+        .maybeSingle();
+
+      const profile = (profileRow ?? {}) as { role?: unknown; perfil?: unknown; tipo?: unknown };
+      const resolvedRole =
+        roleTableRow?.role ?? profile.role ?? profile.perfil ?? profile.tipo ?? "operador";
+
+      setRole(normalizeRole(resolvedRole));
     } finally {
       setRoleLoading(false);
     }
@@ -494,6 +508,12 @@ useEffect(() => {
       </div>
 
       {err && <div className="border border-red-200 bg-red-50 text-red-800 rounded-md p-3 text-sm">{err}</div>}
+
+      {role === "operador" && (
+        <div className="border border-amber-200 bg-amber-50 text-amber-900 rounded-md p-3 text-sm">
+          Ao salvar um novo Status, ele será repassado para Supervisor e Administrador. Após salvar, você não poderá editar.
+        </div>
+      )}
       
       {summary && (
   <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3">
