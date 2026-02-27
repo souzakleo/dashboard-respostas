@@ -190,18 +190,22 @@ export default function StatusPage() {
   const months = useMemo(() => Array.from({ length: 12 }, (_, i) => i + 1), []);
 
   async function loadMe() {
-    const { data } = await supabase.auth.getUser();
-    const uid = data?.user?.id ?? null;
-    setUserId(uid);
+    try {
+      const { data } = await supabase.auth.getUser();
+      const uid = data?.user?.id ?? null;
+      setUserId(uid);
 
-    if (!uid) {
-      setRole("leitor");
-      return;
+      if (!uid) {
+        setRole("leitor");
+        return;
+      }
+
+      const me = await supabase.from("user_profiles").select("role").eq("user_id", uid).maybeSingle();
+      const r = normalizeRole(me.data?.role ?? "operador");
+      setRole(r);
+    } finally {
+      setRoleLoading(false);
     }
-
-    const me = await supabase.from("user_profiles").select("role").eq("user_id", uid).maybeSingle();
-    const r = normalizeRole(me.data?.role ?? "operador");
-setRole(r);
   }
   async function loadSituacoes() {
     const { data, error } = await supabase
@@ -307,20 +311,6 @@ useEffect(() => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [ano, mes, userId, role]);
 
-useEffect(() => {
-  (async () => {
-    const { data, error } = await supabase.rpc("user_role");
-
-    if (error) {
-      console.error("Erro ao carregar role:", error);
-      setRole("leitor");
-    } else {
-      setRole((data ?? "leitor") as Role);
-    }
-
-    setRoleLoading(false);
-  })();
-}, []);
 
   useEffect(() => {
     (async () => {
@@ -489,7 +479,7 @@ useEffect(() => {
 
           {userId && (
   <>
-    {(role === "admin" || role === "supervisor" || role === "operador") && (
+    {!roleLoading && (role === "admin" || role === "supervisor" || role === "operador") && (
       <button
         onClick={openCreate}
         className="rounded-md bg-black text-white px-3 py-1.5 text-sm hover:opacity-90"
