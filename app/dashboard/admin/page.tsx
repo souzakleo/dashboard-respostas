@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
@@ -13,6 +13,13 @@ type AdminUser = {
   telefone: string;
   role: Role;
   created_at: string;
+};
+
+type ApiResult = {
+  ok?: boolean;
+  error?: string;
+  details?: string;
+  users?: AdminUser[];
 };
 
 export default function AdminPage() {
@@ -34,12 +41,12 @@ export default function AdminPage() {
 
   const [savingRoleId, setSavingRoleId] = useState<string | null>(null);
 
-  async function getAccessToken() {
+  const getAccessToken = useCallback(async () => {
     const { data } = await supabase.auth.getSession();
     return data.session?.access_token ?? "";
-  }
+  }, []);
 
-  async function loadUsers() {
+  const loadUsers = useCallback(async () => {
     const authToken = await getAccessToken();
     if (!authToken) return;
 
@@ -47,22 +54,20 @@ export default function AdminPage() {
     try {
       const res = await fetch("/api/admin/users", {
         method: "GET",
-        headers: {
-          Authorization: `Bearer ${authToken}`,
-        },
+        headers: { Authorization: `Bearer ${authToken}` },
       });
 
-      const data = await res.json();
+      const data = (await res.json()) as ApiResult;
       if (!res.ok || !data?.ok) {
         alert(`Erro ao carregar usuários: ${data?.details ?? data?.error ?? "desconhecido"}`);
         return;
       }
 
-      setUsers((data.users ?? []) as AdminUser[]);
+      setUsers(data.users ?? []);
     } finally {
       setListLoading(false);
     }
-  }
+  }, [getAccessToken]);
 
   useEffect(() => {
     (async () => {
@@ -75,11 +80,7 @@ export default function AdminPage() {
         return;
       }
 
-      const { data: roleRow } = await supabase
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", user.id)
-        .maybeSingle();
+      const { data: roleRow } = await supabase.from("user_roles").select("role").eq("user_id", user.id).maybeSingle();
 
       const currentRole = (roleRow?.role ?? "leitor") as Role;
       if (currentRole !== "admin") {
@@ -91,11 +92,16 @@ export default function AdminPage() {
       await loadUsers();
       setLoading(false);
     })();
-  }, [router]);
+  }, [loadUsers, router]);
 
   async function createUser() {
     const authToken = await getAccessToken();
     if (!authToken) return;
+
+    if (!email.trim() || !password.trim()) {
+      alert("Informe email e senha para criar o usuário.");
+      return;
+    }
 
     setFormLoading(true);
     try {
@@ -105,16 +111,10 @@ export default function AdminPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${authToken}`,
         },
-        body: JSON.stringify({
-          email,
-          nome,
-          telefone,
-          role,
-          password,
-        }),
+        body: JSON.stringify({ email, nome, telefone, role, password }),
       });
 
-      const data = await res.json();
+      const data = (await res.json()) as ApiResult;
       if (!res.ok || !data?.ok) {
         alert(`Erro ao criar usuário: ${data?.details ?? data?.error ?? "desconhecido"}`);
         return;
@@ -148,7 +148,7 @@ export default function AdminPage() {
         body: JSON.stringify({ user_id: userId, role: nextRole }),
       });
 
-      const data = await res.json();
+      const data = (await res.json()) as ApiResult;
       if (!res.ok || !data?.ok) {
         alert(`Erro ao atualizar perfil: ${data?.details ?? data?.error ?? "desconhecido"}`);
         return;
