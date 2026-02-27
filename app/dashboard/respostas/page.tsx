@@ -832,8 +832,8 @@ export default function Page() {
 
                     {r.tags.length > 0 && (
                       <div className="flex flex-wrap gap-2 mt-2">
-                        {r.tags.map((t) => (
-                          <span key={t} className="text-xs bg-slate-100 px-2 py-1 rounded">
+                        {r.tags.map((t, idx) => (
+                          <span key={`${r.id}-${t}-${idx}`} className="text-xs bg-slate-100 px-2 py-1 rounded">
                             {t}
                           </span>
                         ))}

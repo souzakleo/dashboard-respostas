@@ -26,7 +26,7 @@ export async function POST(req: Request) {
   const role = String(body?.role ?? "").trim() as Role;
 
   if (!userId) return json(400, { ok: false, error: "missing_user_id" });
-  if (!(["admin", "supervisor", "leitor"] as Role[]).includes(role)) {
+  if (!( ["admin", "supervisor", "leitor"] as Role[]).includes(role)) {
     return json(400, { ok: false, error: "invalid_role" });
   }
 
