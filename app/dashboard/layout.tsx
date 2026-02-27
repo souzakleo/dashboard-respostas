@@ -24,6 +24,7 @@ export default function DashboardLayout({
   const [userName, setUserName] = useState("");
   const [role, setRole] = useState("");
   const [loading, setLoading] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   useEffect(() => {
     async function loadUser() {
@@ -32,9 +33,12 @@ export default function DashboardLayout({
       } = await supabase.auth.getUser();
 
       if (!user) {
+        setIsAuthenticated(false);
         setLoading(false);
         return;
       }
+
+      setIsAuthenticated(true);
 
       // 🔹 Busca nome
       const { data: profile } = await supabase
@@ -101,6 +105,10 @@ export default function DashboardLayout({
         Carregando...
       </div>
     );
+  }
+
+  if (!isAuthenticated) {
+    return <main className="min-h-screen">{children}</main>;
   }
 
   return (
