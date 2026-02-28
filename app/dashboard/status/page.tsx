@@ -98,6 +98,13 @@ type CommentRow = {
   created_at: string;
 };
 
+type OperatorCommentRow = {
+  status_id: string;
+  comentario: string;
+  created_by: string;
+  created_at: string;
+};
+
 type HistoryRow = {
   id: string;
   cpf: string;
@@ -189,6 +196,7 @@ export default function StatusPage() {
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
   const [comments, setComments] = useState<CommentRow[]>([]);
   const [commentText, setCommentText] = useState("");
+  const [operatorPendingCount, setOperatorPendingCount] = useState(0);
   const [operatorUpdateText, setOperatorUpdateText] = useState("");
   const [sendingOperatorUpdate, setSendingOperatorUpdate] = useState(false);
   const [confirmingOperatorReply, setConfirmingOperatorReply] = useState(false);
@@ -489,6 +497,7 @@ useEffect(() => {
       if (error) throw error;
       setOperatorUpdateText("");
       if (expandedRow) await loadExpandedExtras(expandedRow);
+      await loadOperatorPendingNotifications();
     } catch (e: any) {
       setErr(e?.message ?? "Erro ao enviar atualização ao operador");
     } finally {
@@ -506,10 +515,62 @@ useEffect(() => {
       });
       if (error) throw error;
       if (expandedRow) await loadExpandedExtras(expandedRow);
+      await loadOperatorPendingNotifications();
     } catch (e: any) {
       setErr(e?.message ?? "Erro ao confirmar envio ao usuário");
     } finally {
       setConfirmingOperatorReply(false);
+    }
+  }
+
+  async function loadOperatorPendingNotifications() {
+    if (role !== "operador" || !userId) {
+      setOperatorPendingCount(0);
+      return;
+    }
+
+    try {
+      const [updatesResp, confirmsResp] = await Promise.all([
+        supabase
+          .from("status_comments")
+          .select("status_id,comentario,created_by,created_at")
+          .ilike("comentario", `${OPERATOR_UPDATE_PREFIX}%`),
+        supabase
+          .from("status_comments")
+          .select("status_id,comentario,created_by,created_at")
+          .eq("created_by", userId)
+          .ilike("comentario", `${OPERATOR_CONFIRM_PREFIX}%`),
+      ]);
+
+      if (updatesResp.error) throw updatesResp.error;
+      if (confirmsResp.error) throw confirmsResp.error;
+
+      const updates = (updatesResp.data ?? []) as OperatorCommentRow[];
+      const confirms = (confirmsResp.data ?? []) as OperatorCommentRow[];
+
+      const latestUpdateByStatus = new Map<string, number>();
+      for (const item of updates) {
+        const ts = new Date(item.created_at).getTime();
+        const prev = latestUpdateByStatus.get(item.status_id) ?? 0;
+        if (ts > prev) latestUpdateByStatus.set(item.status_id, ts);
+      }
+
+      const latestConfirmByStatus = new Map<string, number>();
+      for (const item of confirms) {
+        const ts = new Date(item.created_at).getTime();
+        const prev = latestConfirmByStatus.get(item.status_id) ?? 0;
+        if (ts > prev) latestConfirmByStatus.set(item.status_id, ts);
+      }
+
+      let pending = 0;
+      for (const [statusId, updateTs] of latestUpdateByStatus.entries()) {
+        const confirmTs = latestConfirmByStatus.get(statusId) ?? 0;
+        if (confirmTs < updateTs) pending += 1;
+      }
+
+      setOperatorPendingCount(pending);
+    } catch {
+      setOperatorPendingCount(0);
     }
   }
 
@@ -522,6 +583,11 @@ useEffect(() => {
     setEditing(row);
     setOpenForm(true);
   }
+
+  useEffect(() => {
+    loadOperatorPendingNotifications();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role, userId, rows]);
 
   const filteredRows = useMemo(
     () => rows.filter((r) => (listTab === "ativos" ? !r.concluida : r.concluida)),
@@ -560,6 +626,24 @@ useEffect(() => {
               </option>
             ))}
           </select>
+
+          {role === "operador" && (
+            <div
+              className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md border text-sm ${
+                operatorPendingCount > 0
+                  ? "border-red-200 bg-red-50 text-red-700"
+                  : "border-slate-200 bg-white text-slate-500"
+              }`}
+              title={
+                operatorPendingCount > 0
+                  ? "Você tem atualizações pendentes para responder"
+                  : "Sem atualizações pendentes"
+              }
+            >
+              <span aria-hidden="true">🔔</span>
+              <span>{operatorPendingCount}</span>
+            </div>
+          )}
 
           {!roleLoading && (role === "admin" || role === "supervisor" || role === "operador") && (
             <button
