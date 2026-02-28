@@ -211,10 +211,6 @@ export default function StatusPage() {
   const [operatorUpdateText, setOperatorUpdateText] = useState("");
   const [sendingOperatorUpdate, setSendingOperatorUpdate] = useState(false);
   const [confirmingOperatorReply, setConfirmingOperatorReply] = useState(false);
-  const [reviewerReturnComment, setReviewerReturnComment] = useState("");
-  const [sendingReviewerReturn, setSendingReviewerReturn] = useState(false);
-  const [concludingStatus, setConcludingStatus] = useState(false);
-  const [showReviewerReturnForm, setShowReviewerReturnForm] = useState(false);
 
   const [editing, setEditing] = useState<StatusRow | null>(null);
   const [openForm, setOpenForm] = useState(false);
@@ -447,7 +443,27 @@ useEffect(() => {
         p_situacao_id: situacaoId,
       });
       if (error) throw error;
-      await loadList();
+
+      const selectedSituacao = situacoes.find((s) => s.id === situacaoId) ?? null;
+      const selectedIsFinal =
+        !!selectedSituacao &&
+        (selectedSituacao.finaliza ||
+          ["concluido", "concluida", "resolvido", "resolvida", "finalizado", "finalizada"].some((slug) =>
+            (selectedSituacao.slug ?? "").includes(slug)
+          ));
+
+      const refreshedRows = await loadList();
+      const targetRow = (refreshedRows ?? []).find((row) => row.id === statusId) ?? null;
+      const rowConcluded = targetRow ? isStatusConsideredConcluded(targetRow) : false;
+
+      if (selectedIsFinal && rowConcluded) {
+        setListTab("concluidos");
+        setExpandedId(null);
+        await loadOperatorPendingNotifications();
+        await loadReviewerPendingNotifications();
+        return;
+      }
+
       setExpandedId(statusId);
     } catch (e: any) {
       setErr(e?.message ?? "Erro ao alterar situação");
@@ -540,86 +556,6 @@ useEffect(() => {
       setErr(e?.message ?? "Erro ao confirmar envio ao usuário");
     } finally {
       setConfirmingOperatorReply(false);
-    }
-  }
-
-  async function onReviewerReturnToOperator(statusId: string) {
-    const txt = reviewerReturnComment.trim();
-    if (!txt) return;
-
-    setSendingReviewerReturn(true);
-    setErr(null);
-    try {
-      const { error } = await supabase.rpc("status_add_comment", {
-        p_status_id: statusId,
-        p_comentario: `${OPERATOR_UPDATE_PREFIX} ${txt}`,
-      });
-      if (error) throw error;
-      setReviewerReturnComment("");
-      setShowReviewerReturnForm(false);
-      if (expandedRow) await loadExpandedExtras(expandedRow);
-      await loadOperatorPendingNotifications();
-      await loadReviewerPendingNotifications();
-    } catch (e: any) {
-      setErr(e?.message ?? "Erro ao devolver atualização ao operador");
-    } finally {
-      setSendingReviewerReturn(false);
-    }
-  }
-
-  async function onReviewerConcludeStatus(statusId: string) {
-    const finalSituacoes = situacoes.filter((s) => s.finaliza);
-    const preferredFinalSituacao =
-      finalSituacoes.find((s) => ["concluido", "concluida", "resolvido", "resolvida"].some((slug) => (s.slug ?? "").includes(slug))) ??
-      finalSituacoes[0] ??
-      null;
-
-    if (!preferredFinalSituacao) {
-      setErr("Não há situação final configurada para concluir o status.");
-      return;
-    }
-
-    setConcludingStatus(true);
-    setErr(null);
-    try {
-      const { error } = await supabase.rpc("status_set_situacao", {
-        p_status_id: statusId,
-        p_situacao_id: preferredFinalSituacao.id,
-      });
-      if (error) throw error;
-
-      let refreshedRows = await loadList();
-      let concludedNow = (refreshedRows ?? []).some((row) => row.id === statusId && isStatusConsideredConcluded(row));
-
-      if (!concludedNow) {
-        const fallbackFinalSituacao = finalSituacoes.find((s) => s.id !== preferredFinalSituacao.id) ?? null;
-
-        if (fallbackFinalSituacao) {
-          const fallbackResult = await supabase.rpc("status_set_situacao", {
-            p_status_id: statusId,
-            p_situacao_id: fallbackFinalSituacao.id,
-          });
-          if (fallbackResult.error) throw fallbackResult.error;
-
-          refreshedRows = await loadList();
-          concludedNow = (refreshedRows ?? []).some((row) => row.id === statusId && isStatusConsideredConcluded(row));
-        }
-      }
-
-      if (!concludedNow) {
-        setErr("Não foi possível concluir o status. Verifique a configuração da situação final.");
-        setListTab("ativos");
-        return;
-      }
-
-      setListTab("concluidos");
-      setExpandedId(null);
-      await loadOperatorPendingNotifications();
-      await loadReviewerPendingNotifications();
-    } catch (e: any) {
-      setErr(e?.message ?? "Erro ao concluir status");
-    } finally {
-      setConcludingStatus(false);
     }
   }
 
@@ -775,11 +711,6 @@ useEffect(() => {
       setExpandedId(null);
     }
   }, [expandedId, filteredRows]);
-
-  useEffect(() => {
-    setShowReviewerReturnForm(false);
-    setReviewerReturnComment("");
-  }, [expandedId]);
 
   const headerTitle = "Status";
 
@@ -1171,55 +1102,14 @@ useEffect(() => {
                                     )}
 
                                     {hasReviewerConfirmationPending && !isStatusConsideredConcluded(r) && (
-                                      <div className="border rounded-md p-3 bg-red-50 border-red-200 space-y-3">
+                                      <div className="border rounded-md p-3 bg-red-50 border-red-200 space-y-2">
                                         <div className="text-sm font-medium text-red-900 inline-flex items-center gap-2">
                                           <span aria-hidden="true">🔔</span>
                                           <span>O operador informou que a resposta foi enviada ao usuário.</span>
                                         </div>
-                                        <div className="text-sm text-red-900">Deseja concluir este Status?</div>
-
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                          <button
-                                            className="px-3 py-2 rounded-md text-sm border bg-background hover:bg-muted disabled:opacity-60"
-                                            disabled={concludingStatus}
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              onReviewerConcludeStatus(r.id);
-                                            }}
-                                          >
-                                            {concludingStatus ? "Concluindo..." : "Sim"}
-                                          </button>
-                                          <button
-                                            className="px-3 py-2 rounded-md text-sm border bg-background hover:bg-muted"
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              setShowReviewerReturnForm((v) => !v);
-                                            }}
-                                          >
-                                            Não
-                                          </button>
+                                        <div className="text-sm text-red-900">
+                                          Para concluir automaticamente, atualize a situação deste status para <strong>Resolvido</strong> no seletor acima.
                                         </div>
-
-                                        {showReviewerReturnForm && (
-                                          <div className="flex gap-2 flex-wrap">
-                                            <input
-                                              value={reviewerReturnComment}
-                                              onChange={(e) => setReviewerReturnComment(e.target.value)}
-                                              placeholder="Se não, descreva o que o operador precisa ajustar"
-                                              className="flex-1 min-w-[260px] border rounded-md px-3 py-2 text-sm bg-background"
-                                            />
-                                            <button
-                                              className="px-3 py-2 rounded-md text-sm border bg-background hover:bg-muted disabled:opacity-60"
-                                              disabled={sendingReviewerReturn || !reviewerReturnComment.trim()}
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                onReviewerReturnToOperator(r.id);
-                                              }}
-                                            >
-                                              {sendingReviewerReturn ? "Enviando..." : "Enviar ao Operador"}
-                                            </button>
-                                          </div>
-                                        )}
                                       </div>
                                     )}
 
