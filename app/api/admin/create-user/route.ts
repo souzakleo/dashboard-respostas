@@ -5,26 +5,20 @@ export const dynamic = "force-dynamic";
 
 type Role = "admin" | "supervisor" | "leitor";
 
-function json(status: number, body: any) {
+function json(status: number, body: unknown) {
   return NextResponse.json(body, { status });
 }
 
 export async function POST(req: Request) {
   try {
-    const supabaseUrl =
-      process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
-
-    const anonKey =
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || "";
-
-    const serviceRoleKey =
-      process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE || "";
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || "";
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE || "";
 
     if (!supabaseUrl) return json(500, { ok: false, error: "missing_supabase_url" });
     if (!anonKey) return json(500, { ok: false, error: "missing_anon_key" });
     if (!serviceRoleKey) return json(500, { ok: false, error: "missing_service_role_key" });
 
-    // Token do usuário logado (admin)
     const authHeader = req.headers.get("authorization") || "";
     if (!authHeader) return json(401, { ok: false, error: "missing_authorization" });
 
@@ -37,7 +31,6 @@ export async function POST(req: Request) {
     const password = String(body?.password ?? "").trim();
 
     if (!email) return json(400, { ok: false, error: "missing_email" });
-
     if (!password || password.length < 6) {
       return json(400, {
         ok: false,
@@ -46,17 +39,15 @@ export async function POST(req: Request) {
       });
     }
 
-    if (!["admin", "supervisor", "leitor"].includes(role)) {
+    if (!(["admin", "supervisor", "leitor"] as Role[]).includes(role)) {
       return json(400, { ok: false, error: "invalid_role" });
     }
 
-    // Client para validar sessão e checar admin via RPC (com o token do usuário)
     const supabaseUser = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: authHeader } },
     });
 
     const { data: me, error: meErr } = await supabaseUser.auth.getUser();
-
     if (meErr || !me?.user?.id) {
       return json(401, {
         ok: false,
@@ -65,25 +56,42 @@ export async function POST(req: Request) {
       });
     }
 
-    // Verifica se é admin
-    const { data: isAdmin, error: adminErr } = await supabaseUser.rpc("is_admin", {
-      p_user_id: me.user.id,
-    });
+    const { data: roleRow, error: roleCheckErr } = await supabaseUser
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", me.user.id)
+      .maybeSingle();
 
-    if (adminErr) {
-      return json(500, {
-        ok: false,
-        error: "admin_check_failed",
-        details: adminErr.message,
+    let isAdmin = roleRow?.role === "admin";
+
+    if (!isAdmin) {
+      const { data: rpcAdmin, error: adminErr } = await supabaseUser.rpc("is_admin", {
+        p_user_id: me.user.id,
       });
+
+      if (adminErr && roleCheckErr) {
+        return json(500, {
+          ok: false,
+          error: "admin_check_failed",
+          details: `${roleCheckErr.message} | ${adminErr.message}`,
+        });
+      }
+
+      if (adminErr && !roleCheckErr) {
+        return json(500, {
+          ok: false,
+          error: "admin_check_failed",
+          details: adminErr.message,
+        });
+      }
+
+      isAdmin = !!rpcAdmin;
     }
 
     if (!isAdmin) return json(403, { ok: false, error: "not_admin" });
 
-    // Client admin (server-side) - service role
     const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
 
-    // Cria usuário com senha temporária
     const { data: created, error: createErr } = await supabaseAdmin.auth.admin.createUser({
       email,
       password,
@@ -102,7 +110,6 @@ export async function POST(req: Request) {
     const newUserId = created?.user?.id;
     if (!newUserId) return json(500, { ok: false, error: "create_user_no_id" });
 
-    // Salva profile (com tratamento de erro)
     const { error: profErr } = await supabaseAdmin.rpc("upsert_user_profile", {
       p_user_id: newUserId,
       p_nome: nome,
@@ -110,33 +117,45 @@ export async function POST(req: Request) {
     });
 
     if (profErr) {
-      return json(500, {
-        ok: false,
-        error: "profile_failed",
-        details: profErr.message,
-      });
+      const { error: profileUpsertErr } = await supabaseAdmin
+        .from("user_profiles")
+        .upsert({ user_id: newUserId, nome, telefone }, { onConflict: "user_id" });
+
+      if (profileUpsertErr) {
+        return json(500, {
+          ok: false,
+          error: "profile_failed",
+          details: `${profErr.message} | fallback: ${profileUpsertErr.message}`,
+        });
+      }
     }
 
-    // Define nível (com tratamento de erro)
     const { error: roleErr } = await supabaseAdmin.rpc("set_user_role", {
       p_user_id: newUserId,
       p_role: role,
     });
 
     if (roleErr) {
-      return json(500, {
-        ok: false,
-        error: "set_role_failed",
-        details: roleErr.message,
-      });
+      const { error: roleUpsertErr } = await supabaseAdmin
+        .from("user_roles")
+        .upsert({ user_id: newUserId, role }, { onConflict: "user_id" });
+
+      if (roleUpsertErr) {
+        return json(500, {
+          ok: false,
+          error: "set_role_failed",
+          details: `${roleErr.message} | fallback: ${roleUpsertErr.message}`,
+        });
+      }
     }
 
     return json(200, { ok: true, user_id: newUserId });
-  } catch (e: any) {
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e);
     return json(500, {
       ok: false,
       error: "unexpected",
-      details: String(e?.message ?? e),
+      details: message,
     });
   }
 }
