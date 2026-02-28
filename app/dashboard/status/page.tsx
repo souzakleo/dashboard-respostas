@@ -189,6 +189,7 @@ export default function StatusPage() {
 
   const [editing, setEditing] = useState<StatusRow | null>(null);
   const [openForm, setOpenForm] = useState(false);
+  const [listTab, setListTab] = useState<"ativos" | "concluidos">("ativos");
 
   const years = useMemo(() => {
     const y = defaultAno;
@@ -477,6 +478,17 @@ useEffect(() => {
     setOpenForm(true);
   }
 
+  const filteredRows = useMemo(
+    () => rows.filter((r) => (listTab === "ativos" ? !r.concluida : r.concluida)),
+    [rows, listTab]
+  );
+
+  useEffect(() => {
+    if (expandedId && !filteredRows.some((r) => r.id === expandedId)) {
+      setExpandedId(null);
+    }
+  }, [expandedId, filteredRows]);
+
   const headerTitle = "Status";
 
   return (
@@ -557,6 +569,25 @@ useEffect(() => {
   </div>
 )}
 
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => setListTab("ativos")}
+          className={`px-4 py-2 text-sm rounded-md border ${
+            listTab === "ativos" ? "bg-slate-900 text-white border-slate-900" : "bg-white hover:bg-muted"
+          }`}
+        >
+          Ativos ({rows.filter((r) => !r.concluida).length})
+        </button>
+        <button
+          onClick={() => setListTab("concluidos")}
+          className={`px-4 py-2 text-sm rounded-md border ${
+            listTab === "concluidos" ? "bg-slate-900 text-white border-slate-900" : "bg-white hover:bg-muted"
+          }`}
+        >
+          Concluídos ({rows.filter((r) => r.concluida).length})
+        </button>
+      </div>
+
       <div className="border rounded-lg overflow-hidden">
         <div className="w-full overflow-auto">
           <table className="min-w-[980px] w-full text-sm">
@@ -580,14 +611,14 @@ useEffect(() => {
                     Carregando...
                   </td>
                 </tr>
-              ) : rows.length === 0 ? (
+              ) : filteredRows.length === 0 ? (
                 <tr>
                   <td className="p-4 text-muted-foreground" colSpan={8}>
-                    Nenhum registro para {pad2(mes)}/{ano}.
+                    Nenhum status {listTab === "ativos" ? "ativo" : "concluído"} para {pad2(mes)}/{ano}.
                   </td>
                 </tr>
               ) : (
-                rows.map((r) => {
+                filteredRows.map((r) => {
                   const isExpanded = expandedId === r.id;
                   const situacaoLabel = r.situacao_nome
                     ? `${r.situacao_nome}${r.situacao_por_nome ? ` — (${r.situacao_por_nome})` : ""}`
