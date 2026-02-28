@@ -12,6 +12,22 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
+function normalizeRole(value: unknown) {
+  const v = String(value ?? "").trim().toLowerCase();
+  if (v === "admin") return "admin";
+  if (v === "supervisor") return "supervisor";
+  if (v === "operador" || v === "operator") return "operador";
+  return "leitor";
+}
+
+function resolveRoleFromCandidates(...values: unknown[]) {
+  const normalized = values.map((v) => normalizeRole(v));
+  if (normalized.includes("admin")) return "admin";
+  if (normalized.includes("supervisor")) return "supervisor";
+  if (normalized.includes("operador")) return "operador";
+  return "leitor";
+}
+
 export default function DashboardLayout({
   children,
 }: {
@@ -47,20 +63,18 @@ export default function DashboardLayout({
         .eq("user_id", user.id)
         .single();
 
-      // 🔹 Busca role
-      const { data: roleData } = await supabase
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", user.id)
-        .single();
+      // 🔹 Busca role (com fallback para schemas legados)
+      const [{ data: roleData }, { data: profileRoleData }] = await Promise.all([
+        supabase.from("user_roles").select("role").eq("user_id", user.id).maybeSingle(),
+        supabase.from("user_profiles").select("role,perfil,tipo").eq("user_id", user.id).maybeSingle(),
+      ]);
 
       if (profile?.nome) {
         setUserName(profile.nome);
       }
 
-      if (roleData?.role) {
-        setRole(roleData.role);
-      }
+      const profileRole = (profileRoleData ?? {}) as { role?: unknown; perfil?: unknown; tipo?: unknown };
+      setRole(resolveRoleFromCandidates(roleData?.role, profileRole.role, profileRole.perfil, profileRole.tipo));
 
       setLoading(false);
     }

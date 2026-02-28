@@ -21,6 +21,14 @@ function normalizeRole(r: any): Role {
   return "leitor";
 }
 
+function resolveRoleFromCandidates(...values: unknown[]): Role {
+  const normalized = values.map((v) => normalizeRole(v));
+  if (normalized.includes("admin")) return "admin";
+  if (normalized.includes("supervisor")) return "supervisor";
+  if (normalized.includes("operador")) return "operador";
+  return "leitor";
+}
+
 function formatCPF(v: string) {
   const d = onlyDigits(v).slice(0, 11);
   const p1 = d.slice(0, 3);
@@ -191,8 +199,8 @@ export default function StatusPage() {
 
   async function loadMe() {
     try {
-      const { data } = await supabase.auth.getUser();
-      const uid = data?.user?.id ?? null;
+      const { data: sessionData } = await supabase.auth.getSession();
+      const uid = sessionData.session?.user?.id ?? null;
       setUserId(uid);
 
       if (!uid) {
@@ -213,10 +221,15 @@ export default function StatusPage() {
         .maybeSingle();
 
       const profile = (profileRow ?? {}) as { role?: unknown; perfil?: unknown; tipo?: unknown };
-      const resolvedRole =
-        roleTableRow?.role ?? profile.role ?? profile.perfil ?? profile.tipo ?? "operador";
+      const resolvedRole = resolveRoleFromCandidates(
+        roleTableRow?.role,
+        profile.role,
+        profile.perfil,
+        profile.tipo,
+        "operador"
+      );
 
-      setRole(normalizeRole(resolvedRole));
+      setRole(resolvedRole);
     } finally {
       setRoleLoading(false);
     }
@@ -491,19 +504,14 @@ useEffect(() => {
             ))}
           </select>
 
-          {userId && (
-  <>
-    {!roleLoading && (role === "admin" || role === "supervisor" || role === "operador") && (
-      <button
-        onClick={openCreate}
-        className="rounded-md bg-black text-white px-3 py-1.5 text-sm hover:opacity-90"
-      >
-        Novo Status
-      </button>
-    )}
-
-  </>
-)}
+          {!roleLoading && (role === "admin" || role === "supervisor" || role === "operador") && (
+            <button
+              onClick={openCreate}
+              className="rounded-md bg-black text-white px-3 py-1.5 text-sm hover:opacity-90"
+            >
+              Novo Status
+            </button>
+          )}
         </div>
       </div>
 
