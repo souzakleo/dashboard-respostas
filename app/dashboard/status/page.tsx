@@ -273,9 +273,12 @@ export default function StatusPage() {
     try {
       const { data, error } = await supabase.rpc("status_list_latest_by_cpf", { p_ano: ano, p_mes: mes });
       if (error) throw error;
-      setRows((data ?? []) as StatusRow[]);
+      const nextRows = (data ?? []) as StatusRow[];
+      setRows(nextRows);
+      return nextRows;
     } catch (e: any) {
       setErr(e?.message ?? "Erro ao carregar");
+      return [] as StatusRow[];
     } finally {
       setLoading(false);
     }
@@ -557,8 +560,11 @@ useEffect(() => {
   }
 
   async function onReviewerConcludeStatus(statusId: string) {
-    const finalSituacao = situacoes.find((s) => s.finaliza);
-    if (!finalSituacao) {
+    const preferredFinalSituacao =
+      situacoes.find((s) => ["concluido", "concluida", "resolvido", "resolvida"].some((slug) => s.slug?.includes(slug))) ??
+      situacoes.find((s) => s.finaliza);
+
+    if (!preferredFinalSituacao) {
       setErr("Não há situação final configurada para concluir o status.");
       return;
     }
@@ -568,10 +574,28 @@ useEffect(() => {
     try {
       const { error } = await supabase.rpc("status_set_situacao", {
         p_status_id: statusId,
-        p_situacao_id: finalSituacao.id,
+        p_situacao_id: preferredFinalSituacao.id,
       });
       if (error) throw error;
-      await loadList();
+
+      const refreshedRows = await loadList();
+      const concludedNow = (refreshedRows ?? []).some((row) => row.id === statusId && row.concluida);
+
+      if (!concludedNow) {
+        const fallbackFinalSituacao =
+          situacoes.find((s) => s.finaliza && s.id !== preferredFinalSituacao.id) ??
+          situacoes.find((s) => ["concluido", "concluida", "resolvido", "resolvida"].some((slug) => s.slug?.includes(slug)));
+
+        if (fallbackFinalSituacao) {
+          const fallbackResult = await supabase.rpc("status_set_situacao", {
+            p_status_id: statusId,
+            p_situacao_id: fallbackFinalSituacao.id,
+          });
+          if (fallbackResult.error) throw fallbackResult.error;
+          await loadList();
+        }
+      }
+
       setListTab("concluidos");
       setExpandedId(null);
       await loadOperatorPendingNotifications();
