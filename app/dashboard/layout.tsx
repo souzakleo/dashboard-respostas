@@ -12,6 +12,22 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
+function normalizeRole(value: unknown) {
+  const v = String(value ?? "").trim().toLowerCase();
+  if (v === "admin") return "admin";
+  if (v === "supervisor") return "supervisor";
+  if (v === "operador" || v === "operator") return "operador";
+  return "leitor";
+}
+
+function resolveRoleFromCandidates(...values: unknown[]) {
+  const normalized = values.map((v) => normalizeRole(v));
+  if (normalized.includes("admin")) return "admin";
+  if (normalized.includes("supervisor")) return "supervisor";
+  if (normalized.includes("operador")) return "operador";
+  return "leitor";
+}
+
 export default function DashboardLayout({
   children,
 }: {
@@ -24,6 +40,7 @@ export default function DashboardLayout({
   const [userName, setUserName] = useState("");
   const [role, setRole] = useState("");
   const [loading, setLoading] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   useEffect(() => {
     async function loadUser() {
@@ -32,31 +49,36 @@ export default function DashboardLayout({
       } = await supabase.auth.getUser();
 
       if (!user) {
+        setIsAuthenticated(false);
         setLoading(false);
         return;
       }
+
+      setIsAuthenticated(true);
 
       // 🔹 Busca nome
       const { data: profile } = await supabase
         .from("user_profiles")
         .select("nome")
         .eq("user_id", user.id)
-        .single();
+        .maybeSingle();
 
-      // 🔹 Busca role
-      const { data: roleData } = await supabase
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", user.id)
-        .single();
+      // 🔹 Busca role (com fallback para schemas legados)
+      const [{ data: roleData }, { data: profileRoleData }] = await Promise.all([
+        supabase.from("user_roles").select("role").eq("user_id", user.id).maybeSingle(),
+        supabase.from("user_profiles").select("role,perfil,tipo").eq("user_id", user.id).maybeSingle(),
+      ]);
 
-      if (profile?.nome) {
-        setUserName(profile.nome);
-      }
+      const fallbackName =
+        (user.user_metadata?.nome as string | undefined) ||
+        (user.user_metadata?.full_name as string | undefined) ||
+        (user.user_metadata?.name as string | undefined) ||
+        (user.email ? user.email.split("@")[0] : "Usuário");
 
-      if (roleData?.role) {
-        setRole(roleData.role);
-      }
+      setUserName(String(profile?.nome ?? fallbackName ?? "Usuário"));
+
+      const profileRole = (profileRoleData ?? {}) as { role?: unknown; perfil?: unknown; tipo?: unknown };
+      setRole(resolveRoleFromCandidates(roleData?.role, profileRole.role, profileRole.perfil, profileRole.tipo));
 
       setLoading(false);
     }
@@ -103,6 +125,10 @@ export default function DashboardLayout({
     );
   }
 
+  if (!isAuthenticated) {
+    return <main className="min-h-screen">{children}</main>;
+  }
+
   return (
     <div className="flex min-h-screen bg-background">
       {/* Sidebar */}
@@ -112,9 +138,12 @@ export default function DashboardLayout({
         } p-3 flex flex-col`}
       >
         {/* Top */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-start justify-between mb-6">
           {!collapsed && (
-            <span className="font-semibold text-lg">Dashboard</span>
+            <div>
+              <div className="font-semibold text-lg leading-tight">{userName}</div>
+              <div className="text-sm text-muted-foreground capitalize">{role}</div>
+            </div>
           )}
           <button
             onClick={() => setCollapsed(!collapsed)}
@@ -125,7 +154,7 @@ export default function DashboardLayout({
         </div>
 
         {/* Navigation */}
-        <div className="space-y-2 flex-1">
+        <div className="space-y-2">
           <NavItem
             href="/dashboard/respostas"
             label="Respostas"
@@ -146,18 +175,7 @@ export default function DashboardLayout({
           )}
         </div>
 
-        {/* User Info */}
-        {!collapsed && (
-          <div className="border-t pt-4 mt-4 text-sm">
-            <div className="font-medium">{userName}</div>
-            <div className="text-muted-foreground capitalize">
-              {role}
-            </div>
-          </div>
-        )}
-
-        {/* Logout */}
-        <div className="pt-3">
+        <div className="border-t mt-4 pt-4">
           <button
             onClick={logout}
             className="flex items-center gap-3 px-3 py-2 rounded-md text-sm hover:bg-muted w-full"
