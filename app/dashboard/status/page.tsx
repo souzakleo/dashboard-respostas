@@ -21,6 +21,14 @@ function normalizeRole(r: any): Role {
   return "leitor";
 }
 
+function resolveRoleFromCandidates(...values: unknown[]): Role {
+  const normalized = values.map((v) => normalizeRole(v));
+  if (normalized.includes("admin")) return "admin";
+  if (normalized.includes("supervisor")) return "supervisor";
+  if (normalized.includes("operador")) return "operador";
+  return "leitor";
+}
+
 function formatCPF(v: string) {
   const d = onlyDigits(v).slice(0, 11);
   const p1 = d.slice(0, 3);
@@ -190,40 +198,42 @@ export default function StatusPage() {
   const months = useMemo(() => Array.from({ length: 12 }, (_, i) => i + 1), []);
 
   async function loadMe() {
-    const { data } = await supabase.auth.getUser();
-    const uid = data?.user?.id ?? null;
-    setUserId(uid);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const uid = sessionData.session?.user?.id ?? null;
+      setUserId(uid);
 
-    if (!uid) {
-      setRole("leitor");
-      return;
+      if (!uid) {
+        setRole("leitor");
+        return;
+      }
+
+      const { data: roleTableRow } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", uid)
+        .maybeSingle();
+
+      const { data: profileRow } = await supabase
+        .from("user_profiles")
+        .select("role,perfil,tipo")
+        .eq("user_id", uid)
+        .maybeSingle();
+
+      const profile = (profileRow ?? {}) as { role?: unknown; perfil?: unknown; tipo?: unknown };
+      const resolvedRole = resolveRoleFromCandidates(
+        roleTableRow?.role,
+        profile.role,
+        profile.perfil,
+        profile.tipo,
+        "operador"
+      );
+
+      setRole(resolvedRole);
+    } finally {
+      setRoleLoading(false);
     }
-
-    const me = await supabase.from("user_profiles").select("role").eq("user_id", uid).maybeSingle();
-    const r = normalizeRole(me.data?.role ?? "operador");
-setRole(r);
   }
-
-  async function testRpcAsCurrentUser() {
-  if (!rows[0] || !situacoes[0]) {
-    alert("Precisa ter pelo menos 1 status e 1 situação ativa.");
-    return;
-  }
-
-  const r = rows[0];
-  const s = situacoes[0];
-
-  const { error } = await supabase.rpc("status_set_situacao", {
-    p_status_id: r.id,
-    p_situacao_id: s.id,
-  });
-
-  if (error) {
-    alert("Erro (esperado para operador): " + error.message);
-  } else {
-    alert("Alterou (isso só pode acontecer para supervisor/admin).");
-  }
-}
   async function loadSituacoes() {
     const { data, error } = await supabase
       .from("status_situacoes")
@@ -328,20 +338,6 @@ useEffect(() => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, [ano, mes, userId, role]);
 
-useEffect(() => {
-  (async () => {
-    const { data, error } = await supabase.rpc("user_role");
-
-    if (error) {
-      console.error("Erro ao carregar role:", error);
-      setRole("leitor");
-    } else {
-      setRole((data ?? "leitor") as Role);
-    }
-
-    setRoleLoading(false);
-  })();
-}, []);
 
   useEffect(() => {
     (async () => {
@@ -355,10 +351,8 @@ useEffect(() => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expandedRow?.id]);
 
-  function canEdit(row: StatusRow) {
-    if (role === "admin" || role === "supervisor") return true;
-    if (role === "operador") return row.operador_id === userId && !row.concluida;
-    return false;
+  function canEdit() {
+    return role === "admin" || role === "supervisor";
   }
   function canDelete() {
     return role === "admin";
@@ -378,6 +372,13 @@ useEffect(() => {
     ano: number;
     mes: number;
   }) {
+    if (!payload.id && role === "operador") {
+      const confirmed = window.confirm(
+        "Seu Status será criado e repassado para o supervisor. Confirme se todas as informações estão corretas antes de salvar"
+      );
+      if (!confirmed) return;
+    }
+
     setErr(null);
     try {
       const { data, error } = await supabase.rpc("status_upsert", {
@@ -503,29 +504,24 @@ useEffect(() => {
             ))}
           </select>
 
-          {userId && (
-  <>
-    {(role === "admin" || role === "supervisor" || role === "operador") && (
-      <button
-        onClick={openCreate}
-        className="rounded-md bg-black text-white px-3 py-1.5 text-sm hover:opacity-90"
-      >
-        Novo Status
-      </button>
-    )}
-
-    <button
-      onClick={testRpcAsCurrentUser}
-      className="rounded-md border px-3 py-1.5 text-sm"
-    >
-      Testar RPC
-    </button>
-  </>
-)}
+          {!roleLoading && (role === "admin" || role === "supervisor" || role === "operador") && (
+            <button
+              onClick={openCreate}
+              className="rounded-md bg-black text-white px-3 py-1.5 text-sm hover:opacity-90"
+            >
+              Novo Status
+            </button>
+          )}
         </div>
       </div>
 
       {err && <div className="border border-red-200 bg-red-50 text-red-800 rounded-md p-3 text-sm">{err}</div>}
+
+      {role === "operador" && (
+        <div className="border border-amber-200 bg-amber-50 text-amber-900 rounded-md p-3 text-sm">
+          Ao salvar um novo Status, ele será repassado para Supervisor e Administrador. Após salvar, você não poderá editar.
+        </div>
+      )}
       
       {summary && (
   <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3">
@@ -716,7 +712,7 @@ useEffect(() => {
                                     </button>
                                   )}
 
-                                  {canEdit(r) && (
+                                  {canEdit() && (
                                     <button
                                       className="px-3 py-1.5 rounded-md text-sm border bg-background hover:bg-muted"
                                       onClick={(e) => {
@@ -779,9 +775,7 @@ useEffect(() => {
                                             <td className="p-3">{h.operador_nome ?? "—"}</td>
                                             <td className="p-3">{h.concluida ? `Sim (${formatDateTime(h.concluida_em)})` : "Não"}</td>
                                             <td className="p-3">
-                                              {(role === "admin" ||
-                                                role === "supervisor" ||
-                                                (role === "operador" && h.operador_id === userId && !h.concluida)) ? (
+                                              {canEdit() ? (
                                                 <button
                                                   className="px-3 py-1.5 rounded-md text-sm border bg-background hover:bg-muted"
                                                onClick={async (e) => {
