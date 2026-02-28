@@ -44,26 +44,6 @@ function dbToResposta(r: any): Resposta {
   };
 }
 
-function roleLabel(r: Role) {
-  if (r === "admin") return "Administrador";
-  if (r === "supervisor") return "Supervisor";
-  return "Operador";
-}
-
-function getDisplayName(user: any) {
-  const full =
-    (user?.user_metadata?.full_name as string | undefined) ||
-    (user?.user_metadata?.name as string | undefined) ||
-    (user?.user_metadata?.display_name as string | undefined);
-
-  if (full && full.trim()) return full.trim();
-
-  const email: string | undefined = user?.email;
-  if (email) return email.split("@")[0];
-
-  return "Usuário";
-}
-
 function clampText(s: string, max = 220) {
   const text = String(s ?? "");
   return text.length > max ? text.slice(0, max).trimEnd() + "…" : text;
@@ -141,7 +121,6 @@ export default function Page() {
 
   // role/permissões (preferência: user_roles; fallback: user_profiles)
   const [role, setRole] = useState<Role>("leitor");
-  const [roleLoading, setRoleLoading] = useState(true);
 
   const isAdmin = role === "admin";
   const canWrite = role === "admin" || role === "supervisor";
@@ -254,12 +233,11 @@ export default function Page() {
     (async () => {
       if (!session?.user?.id) {
         setRole("leitor");
-        setRoleLoading(false);
         return;
       }
 
-      setRoleLoading(true);
       const uid = session.user.id;
+
 
       const { data: roleRow, error: roleErr } = await supabase
         .from("user_roles")
@@ -269,7 +247,6 @@ export default function Page() {
 
       if (!roleErr && roleRow?.role) {
         setRole(roleRow.role as Role);
-        setRoleLoading(false);
         return;
       }
 
@@ -286,7 +263,6 @@ export default function Page() {
         setRole((profileRow?.role ?? "leitor") as Role);
       }
 
-      setRoleLoading(false);
     })();
   }, [session?.user?.id]);
 
@@ -600,8 +576,6 @@ export default function Page() {
     );
   }
 
-  const user = session.user;
-  const displayName = getDisplayName(user);
 
   // ============================
   // MAIN UI
@@ -631,31 +605,12 @@ export default function Page() {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm text-slate-700">
-              Olá, <b>{displayName}</b>
-            </span>
-
-            <span className="text-xs px-2 py-1 rounded-full border bg-white text-slate-700">
-              {roleLoading ? "Carregando..." : roleLabel(role)}
-            </span>
-
             <button
               onClick={reload}
               disabled={loading}
               className="border rounded-md px-3 py-2 text-sm transition-colors bg-white hover:bg-slate-900 hover:text-white disabled:opacity-50 disabled:hover:bg-white disabled:hover:text-slate-900"
             >
               {loading ? "Atualizando..." : "Atualizar"}
-            </button>
-
-            <button
-              onClick={async () => {
-                await supabase.auth.signOut();
-                setSession(null);
-                setRole("leitor");
-              }}
-              className="border rounded-md px-3 py-2 text-sm transition-colors bg-white hover:bg-slate-900 hover:text-white"
-            >
-              Sair
             </button>
 
             {canWrite && (

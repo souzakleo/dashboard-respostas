@@ -61,7 +61,7 @@ export default function DashboardLayout({
         .from("user_profiles")
         .select("nome")
         .eq("user_id", user.id)
-        .single();
+        .maybeSingle();
 
       // 🔹 Busca role (com fallback para schemas legados)
       const [{ data: roleData }, { data: profileRoleData }] = await Promise.all([
@@ -69,9 +69,13 @@ export default function DashboardLayout({
         supabase.from("user_profiles").select("role,perfil,tipo").eq("user_id", user.id).maybeSingle(),
       ]);
 
-      if (profile?.nome) {
-        setUserName(profile.nome);
-      }
+      const fallbackName =
+        (user.user_metadata?.nome as string | undefined) ||
+        (user.user_metadata?.full_name as string | undefined) ||
+        (user.user_metadata?.name as string | undefined) ||
+        (user.email ? user.email.split("@")[0] : "Usuário");
+
+      setUserName(String(profile?.nome ?? fallbackName ?? "Usuário"));
 
       const profileRole = (profileRoleData ?? {}) as { role?: unknown; perfil?: unknown; tipo?: unknown };
       setRole(resolveRoleFromCandidates(roleData?.role, profileRole.role, profileRole.perfil, profileRole.tipo));
