@@ -560,9 +560,11 @@ useEffect(() => {
   }
 
   async function onReviewerConcludeStatus(statusId: string) {
+    const finalSituacoes = situacoes.filter((s) => s.finaliza);
     const preferredFinalSituacao =
-      situacoes.find((s) => ["concluido", "concluida", "resolvido", "resolvida"].some((slug) => s.slug?.includes(slug))) ??
-      situacoes.find((s) => s.finaliza);
+      finalSituacoes.find((s) => ["concluido", "concluida", "resolvido", "resolvida"].some((slug) => (s.slug ?? "").includes(slug))) ??
+      finalSituacoes[0] ??
+      null;
 
     if (!preferredFinalSituacao) {
       setErr("Não há situação final configurada para concluir o status.");
@@ -578,13 +580,11 @@ useEffect(() => {
       });
       if (error) throw error;
 
-      const refreshedRows = await loadList();
-      const concludedNow = (refreshedRows ?? []).some((row) => row.id === statusId && row.concluida);
+      let refreshedRows = await loadList();
+      let concludedNow = (refreshedRows ?? []).some((row) => row.id === statusId && row.concluida);
 
       if (!concludedNow) {
-        const fallbackFinalSituacao =
-          situacoes.find((s) => s.finaliza && s.id !== preferredFinalSituacao.id) ??
-          situacoes.find((s) => ["concluido", "concluida", "resolvido", "resolvida"].some((slug) => s.slug?.includes(slug)));
+        const fallbackFinalSituacao = finalSituacoes.find((s) => s.id !== preferredFinalSituacao.id) ?? null;
 
         if (fallbackFinalSituacao) {
           const fallbackResult = await supabase.rpc("status_set_situacao", {
@@ -592,8 +592,16 @@ useEffect(() => {
             p_situacao_id: fallbackFinalSituacao.id,
           });
           if (fallbackResult.error) throw fallbackResult.error;
-          await loadList();
+
+          refreshedRows = await loadList();
+          concludedNow = (refreshedRows ?? []).some((row) => row.id === statusId && row.concluida);
         }
+      }
+
+      if (!concludedNow) {
+        setErr("Não foi possível concluir o status. Verifique a configuração da situação final.");
+        setListTab("ativos");
+        return;
       }
 
       setListTab("concluidos");
@@ -734,6 +742,15 @@ useEffect(() => {
     setOpenForm(true);
   }
 
+  async function onRefreshTop() {
+    await Promise.all([loadList(), loadSummary()]);
+    if (expandedRow) {
+      await loadExpandedExtras(expandedRow);
+    }
+    await loadOperatorPendingNotifications();
+    await loadReviewerPendingNotifications();
+  }
+
   useEffect(() => {
     loadOperatorPendingNotifications();
     loadReviewerPendingNotifications();
@@ -782,6 +799,13 @@ useEffect(() => {
               </option>
             ))}
           </select>
+
+          <button
+            onClick={onRefreshTop}
+            className="rounded-md border px-3 py-1.5 text-sm bg-background hover:bg-muted"
+          >
+            Atualizar
+          </button>
 
           {role === "operador" && (
             <div
