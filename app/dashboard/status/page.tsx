@@ -1013,6 +1013,21 @@ useEffect(() => {
                                     new Date(latestOperatorConfirmation.created_at).getTime() <
                                       new Date(latestOperatorUpdate.created_at).getTime());
 
+                                const reviewerUpdates = comments.filter(
+                                  (c) => c.comentario?.startsWith(OPERATOR_UPDATE_PREFIX) && c.created_by === userId
+                                );
+                                const latestReviewerUpdate = reviewerUpdates[0] ?? null;
+                                const allOperatorConfirmations = comments.filter((c) =>
+                                  c.comentario?.startsWith(OPERATOR_CONFIRM_PREFIX)
+                                );
+                                const latestAnyOperatorConfirmation = allOperatorConfirmations[0] ?? null;
+                                const hasReviewerConfirmationPending =
+                                  (role === "admin" || role === "supervisor") &&
+                                  !!latestReviewerUpdate &&
+                                  !!latestAnyOperatorConfirmation &&
+                                  new Date(latestAnyOperatorConfirmation.created_at).getTime() >
+                                    new Date(latestReviewerUpdate.created_at).getTime();
+
                                 return (
                                   <div className="space-y-2">
                                     {(role === "admin" || role === "supervisor") && (
@@ -1036,6 +1051,16 @@ useEffect(() => {
                                             {sendingOperatorUpdate ? "Enviando..." : "Notificar Operador"}
                                           </button>
                                         </div>
+                                      </div>
+                                    )}
+
+                                    {hasReviewerConfirmationPending && (
+                                      <div className="border rounded-md p-3 bg-red-50 border-red-200">
+                                        <div className="text-sm font-medium text-red-900 inline-flex items-center gap-2">
+                                          <span aria-hidden="true">🔔</span>
+                                          <span>O operador informou que a resposta foi enviada ao usuário.</span>
+                                        </div>
+                                        <div className="text-sm text-red-900 mt-1">Deseja concluir este Status?</div>
                                       </div>
                                     )}
 
