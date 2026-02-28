@@ -149,6 +149,14 @@ const PRIORIDADES: Array<StatusRow["prioridade"]> = ["Alta", "Média", "Baixa"];
 
 const OPERATOR_UPDATE_PREFIX = "[ATUALIZAÇÃO AO OPERADOR]";
 const OPERATOR_CONFIRM_PREFIX = "[CONFIRMAÇÃO OPERADOR]";
+const OPERATOR_ACK_PREFIX = "[CIENTE OPERADOR]";
+const OPERATOR_SENT_PREFIX = "[RESPOSTA ENVIADA OPERADOR]";
+
+const OPERATOR_NOTIFICATION_OPTIONS = [
+  "Verificar situação com Coordenação de Habilitação",
+  "Verificar situação com Coordenação de Veículos",
+  "Verificar situação com Unidade de Administração",
+] as const;
 
 function pad2(n: number) {
   return String(n).padStart(2, "0");
@@ -209,6 +217,7 @@ export default function StatusPage() {
   const [reviewerPendingCount, setReviewerPendingCount] = useState(0);
   const [reviewerPendingStatusIds, setReviewerPendingStatusIds] = useState<string[]>([]);
   const [operatorUpdateText, setOperatorUpdateText] = useState("");
+  const [notificationOptionByStatus, setNotificationOptionByStatus] = useState<Record<string, string>>({});
   const [sendingOperatorUpdate, setSendingOperatorUpdate] = useState(false);
   const [confirmingOperatorReply, setConfirmingOperatorReply] = useState(false);
 
@@ -438,12 +447,6 @@ useEffect(() => {
   async function onSetSituacao(statusId: string, situacaoId: string) {
     setErr(null);
     try {
-      const { error } = await supabase.rpc("status_set_situacao", {
-        p_status_id: statusId,
-        p_situacao_id: situacaoId,
-      });
-      if (error) throw error;
-
       const selectedSituacao = situacoes.find((s) => s.id === situacaoId) ?? null;
       const selectedIsFinal =
         !!selectedSituacao &&
@@ -451,6 +454,27 @@ useEffect(() => {
           ["concluido", "concluida", "resolvido", "resolvida", "finalizado", "finalizada"].some((slug) =>
             (selectedSituacao.slug ?? "").includes(slug)
           ));
+
+      const selectedNotification = (notificationOptionByStatus[statusId] ?? "").trim();
+      const mustNotifyOperator = (role === "admin" || role === "supervisor") && !selectedIsFinal;
+      if (mustNotifyOperator && !selectedNotification) {
+        setErr("Selecione uma opção de notificação ao Operador antes de atualizar a situação.");
+        return;
+      }
+
+      const { error } = await supabase.rpc("status_set_situacao", {
+        p_status_id: statusId,
+        p_situacao_id: situacaoId,
+      });
+      if (error) throw error;
+
+      if (mustNotifyOperator) {
+        const notifyResult = await supabase.rpc("status_add_comment", {
+          p_status_id: statusId,
+          p_comentario: `${OPERATOR_UPDATE_PREFIX} ${selectedNotification}`,
+        });
+        if (notifyResult.error) throw notifyResult.error;
+      }
 
       const refreshedRows = await loadList();
       const targetRow = (refreshedRows ?? []).find((row) => row.id === statusId) ?? null;
@@ -464,7 +488,15 @@ useEffect(() => {
         return;
       }
 
+      if (mustNotifyOperator) {
+        setNotificationOptionByStatus((prev) => ({ ...prev, [statusId]: "" }));
+      }
       setExpandedId(statusId);
+      await loadOperatorPendingNotifications();
+      await loadReviewerPendingNotifications();
+      if (expandedRow?.id === statusId) {
+        await loadExpandedExtras(expandedRow);
+      }
     } catch (e: any) {
       setErr(e?.message ?? "Erro ao alterar situação");
     }
@@ -540,20 +572,25 @@ useEffect(() => {
     }
   }
 
-  async function onOperatorConfirmReplySent(statusId: string) {
+  async function onOperatorRegisterAction(statusId: string, action: "ciente" | "resposta_enviada") {
     setConfirmingOperatorReply(true);
     setErr(null);
     try {
+      const comment =
+        action === "ciente"
+          ? `${OPERATOR_ACK_PREFIX} Operador ciente da atualização.`
+          : `${OPERATOR_SENT_PREFIX} Resposta enviada ao usuário.`;
+
       const { error } = await supabase.rpc("status_add_comment", {
         p_status_id: statusId,
-        p_comentario: `${OPERATOR_CONFIRM_PREFIX} Resposta enviada ao usuário.`,
+        p_comentario: comment,
       });
       if (error) throw error;
       if (expandedRow) await loadExpandedExtras(expandedRow);
       await loadOperatorPendingNotifications();
       await loadReviewerPendingNotifications();
     } catch (e: any) {
-      setErr(e?.message ?? "Erro ao confirmar envio ao usuário");
+      setErr(e?.message ?? "Erro ao registrar ação do operador");
     } finally {
       setConfirmingOperatorReply(false);
     }
@@ -567,7 +604,7 @@ useEffect(() => {
     }
 
     try {
-      const [updatesResp, confirmsResp] = await Promise.all([
+      const [updatesResp, confirmResp, ackResp, sentResp] = await Promise.all([
         supabase
           .from("status_comments")
           .select("status_id,comentario,created_by,created_at")
@@ -577,13 +614,25 @@ useEffect(() => {
           .select("status_id,comentario,created_by,created_at")
           .eq("created_by", userId)
           .ilike("comentario", `${OPERATOR_CONFIRM_PREFIX}%`),
+        supabase
+          .from("status_comments")
+          .select("status_id,comentario,created_by,created_at")
+          .eq("created_by", userId)
+          .ilike("comentario", `${OPERATOR_ACK_PREFIX}%`),
+        supabase
+          .from("status_comments")
+          .select("status_id,comentario,created_by,created_at")
+          .eq("created_by", userId)
+          .ilike("comentario", `${OPERATOR_SENT_PREFIX}%`),
       ]);
 
       if (updatesResp.error) throw updatesResp.error;
-      if (confirmsResp.error) throw confirmsResp.error;
+      if (confirmResp.error) throw confirmResp.error;
+      if (ackResp.error) throw ackResp.error;
+      if (sentResp.error) throw sentResp.error;
 
       const updates = (updatesResp.data ?? []) as OperatorCommentRow[];
-      const confirms = (confirmsResp.data ?? []) as OperatorCommentRow[];
+      const confirms = ([...(confirmResp.data ?? []), ...(ackResp.data ?? []), ...(sentResp.data ?? [])]) as OperatorCommentRow[];
 
       const latestUpdateByStatus = new Map<string, number>();
       for (const item of updates) {
@@ -626,7 +675,7 @@ useEffect(() => {
     }
 
     try {
-      const [updatesResp, confirmsResp] = await Promise.all([
+      const [updatesResp, confirmResp, ackResp, sentResp] = await Promise.all([
         supabase
           .from("status_comments")
           .select("status_id,comentario,created_by,created_at")
@@ -636,13 +685,23 @@ useEffect(() => {
           .from("status_comments")
           .select("status_id,comentario,created_by,created_at")
           .ilike("comentario", `${OPERATOR_CONFIRM_PREFIX}%`),
+        supabase
+          .from("status_comments")
+          .select("status_id,comentario,created_by,created_at")
+          .ilike("comentario", `${OPERATOR_ACK_PREFIX}%`),
+        supabase
+          .from("status_comments")
+          .select("status_id,comentario,created_by,created_at")
+          .ilike("comentario", `${OPERATOR_SENT_PREFIX}%`),
       ]);
 
       if (updatesResp.error) throw updatesResp.error;
-      if (confirmsResp.error) throw confirmsResp.error;
+      if (confirmResp.error) throw confirmResp.error;
+      if (ackResp.error) throw ackResp.error;
+      if (sentResp.error) throw sentResp.error;
 
       const updates = (updatesResp.data ?? []) as OperatorCommentRow[];
-      const confirms = (confirmsResp.data ?? []) as OperatorCommentRow[];
+      const confirms = ([...(confirmResp.data ?? []), ...(ackResp.data ?? []), ...(sentResp.data ?? [])]) as OperatorCommentRow[];
 
       const latestUpdateByStatus = new Map<string, number>();
       for (const item of updates) {
@@ -973,6 +1032,7 @@ useEffect(() => {
                                 <div className="flex items-center gap-2 flex-wrap">
                                   {/* 🔒 SITUAÇÃO: somente supervisor/admin (e trava se concluído) */}
                                   {(role === "admin" || role === "supervisor") ? (
+                                    <>
                                     <select
                                       className="border rounded-md px-2 py-1 text-sm bg-background"
                                       value={r.situacao_id ?? ""}
@@ -993,6 +1053,27 @@ useEffect(() => {
                                         </option>
                                       ))}
                                     </select>
+
+                                    {!isStatusConsideredConcluded(r) && (
+                                      <select
+                                        className="border rounded-md px-2 py-1 text-sm bg-background"
+                                        value={notificationOptionByStatus[r.id] ?? ""}
+                                        onClick={(e) => e.stopPropagation()}
+                                        onChange={(e) => {
+                                          e.stopPropagation();
+                                          setNotificationOptionByStatus((prev) => ({ ...prev, [r.id]: e.target.value }));
+                                        }}
+                                        title="Selecione a notificação obrigatória ao Operador ao atualizar a situação"
+                                      >
+                                        <option value="">Notificação ao Operador...</option>
+                                        {OPERATOR_NOTIFICATION_OPTIONS.map((opt) => (
+                                          <option key={opt} value={opt}>
+                                            {opt}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    )}
+                                    </>
                                   ) : (
                                     <div
                                       className="px-3 py-1.5 text-sm border rounded-md bg-muted/30 text-muted-foreground"
@@ -1049,31 +1130,42 @@ useEffect(() => {
                                 const updateText = latestOperatorUpdate
                                   ? latestOperatorUpdate.comentario.replace(OPERATOR_UPDATE_PREFIX, "").trim()
                                   : "";
-                                const operatorConfirmations = comments.filter(
-                                  (c) => c.comentario?.startsWith(OPERATOR_CONFIRM_PREFIX) && c.created_by === userId
+                                const operatorActions = comments.filter(
+                                  (c) =>
+                                    c.created_by === userId &&
+                                    (c.comentario?.startsWith(OPERATOR_CONFIRM_PREFIX) ||
+                                      c.comentario?.startsWith(OPERATOR_ACK_PREFIX) ||
+                                      c.comentario?.startsWith(OPERATOR_SENT_PREFIX))
                                 );
-                                const latestOperatorConfirmation = operatorConfirmations[0] ?? null;
+                                const latestOperatorAction = operatorActions[0] ?? null;
                                 const hasPendingOperatorUpdate =
                                   role === "operador" &&
                                   !!latestOperatorUpdate &&
-                                  (!latestOperatorConfirmation ||
-                                    new Date(latestOperatorConfirmation.created_at).getTime() <
+                                  (!latestOperatorAction ||
+                                    new Date(latestOperatorAction.created_at).getTime() <
                                       new Date(latestOperatorUpdate.created_at).getTime());
 
                                 const reviewerUpdates = comments.filter(
                                   (c) => c.comentario?.startsWith(OPERATOR_UPDATE_PREFIX) && c.created_by === userId
                                 );
                                 const latestReviewerUpdate = reviewerUpdates[0] ?? null;
-                                const allOperatorConfirmations = comments.filter((c) =>
-                                  c.comentario?.startsWith(OPERATOR_CONFIRM_PREFIX)
+                                const allOperatorActions = comments.filter(
+                                  (c) =>
+                                    c.comentario?.startsWith(OPERATOR_CONFIRM_PREFIX) ||
+                                    c.comentario?.startsWith(OPERATOR_ACK_PREFIX) ||
+                                    c.comentario?.startsWith(OPERATOR_SENT_PREFIX)
                                 );
-                                const latestAnyOperatorConfirmation = allOperatorConfirmations[0] ?? null;
+                                const latestAnyOperatorAction = allOperatorActions[0] ?? null;
                                 const hasReviewerConfirmationPending =
                                   (role === "admin" || role === "supervisor") &&
                                   !!latestReviewerUpdate &&
-                                  !!latestAnyOperatorConfirmation &&
-                                  new Date(latestAnyOperatorConfirmation.created_at).getTime() >
+                                  !!latestAnyOperatorAction &&
+                                  new Date(latestAnyOperatorAction.created_at).getTime() >
                                     new Date(latestReviewerUpdate.created_at).getTime();
+                                const latestActionIsReplySent =
+                                  !!latestAnyOperatorAction &&
+                                  (latestAnyOperatorAction.comentario?.startsWith(OPERATOR_SENT_PREFIX) ||
+                                    latestAnyOperatorAction.comentario?.startsWith(OPERATOR_CONFIRM_PREFIX));
 
                                 return (
                                   <div className="space-y-2">
@@ -1108,7 +1200,9 @@ useEffect(() => {
                                           <span>O operador informou que a resposta foi enviada ao usuário.</span>
                                         </div>
                                         <div className="text-sm text-red-900">
-                                          Para concluir automaticamente, atualize a situação deste status para <strong>Resolvido</strong> no seletor acima.
+                                          {latestActionIsReplySent
+                                            ? <>Operador informou que a <strong>resposta foi enviada</strong>. Atualize a situação para <strong>Resolvido</strong> no seletor acima para concluir automaticamente.</>
+                                            : <>Operador marcou <strong>Ciente</strong>. Você pode atualizar novamente o status/etiqueta e notificar o operador.</>}
                                         </div>
                                       </div>
                                     )}
@@ -1117,22 +1211,33 @@ useEffect(() => {
                                       <div className="border rounded-md p-3 bg-amber-50 border-amber-200">
                                         <div className="text-sm font-medium text-amber-900">Atualização recebida</div>
                                         <div className="text-sm text-amber-900 mt-1">{updateText || "Sem detalhes"}</div>
-                                        <label className="mt-3 flex items-center gap-2 text-sm">
-                                          <input
-                                            type="checkbox"
-                                            checked={!hasPendingOperatorUpdate}
-                                            disabled={!hasPendingOperatorUpdate || confirmingOperatorReply}
-                                            onChange={(e) => {
-                                              e.stopPropagation();
-                                              if (e.target.checked) onOperatorConfirmReplySent(r.id);
-                                            }}
-                                          />
-                                          <span>
-                                            {hasPendingOperatorUpdate
-                                              ? "Marcar que a resposta foi enviada ao usuário"
-                                              : "Resposta ao usuário já confirmada"}
-                                          </span>
-                                        </label>
+
+                                        {hasPendingOperatorUpdate ? (
+                                          <div className="mt-3 flex items-center gap-2 flex-wrap">
+                                            <button
+                                              className="px-3 py-2 rounded-md text-sm border bg-background hover:bg-muted disabled:opacity-60"
+                                              disabled={confirmingOperatorReply}
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                onOperatorRegisterAction(r.id, "ciente");
+                                              }}
+                                            >
+                                              Ciente
+                                            </button>
+                                            <button
+                                              className="px-3 py-2 rounded-md text-sm border bg-background hover:bg-muted disabled:opacity-60"
+                                              disabled={confirmingOperatorReply}
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                onOperatorRegisterAction(r.id, "resposta_enviada");
+                                              }}
+                                            >
+                                              Resposta enviada ao usuário
+                                            </button>
+                                          </div>
+                                        ) : (
+                                          <div className="mt-3 text-sm text-amber-900">Ação do operador já registrada para esta atualização.</div>
+                                        )}
                                       </div>
                                     )}
                                   </div>
