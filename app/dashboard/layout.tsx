@@ -138,9 +138,12 @@ export default function DashboardLayout({
         } p-3 flex flex-col`}
       >
         {/* Top */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-start justify-between mb-6">
           {!collapsed && (
-            <span className="font-semibold text-lg">Dashboard</span>
+            <div>
+              <div className="font-semibold text-lg leading-tight">{userName}</div>
+              <div className="text-sm text-muted-foreground capitalize">{role}</div>
+            </div>
           )}
           <button
             onClick={() => setCollapsed(!collapsed)}
@@ -173,15 +176,6 @@ export default function DashboardLayout({
         </div>
 
         <div className="border-t mt-4 pt-4">
-          {/* User Info */}
-          {!collapsed && (
-            <div className="text-sm mb-3">
-              <div className="font-medium">{userName}</div>
-              <div className="text-muted-foreground capitalize">{role}</div>
-            </div>
-          )}
-
-          {/* Logout */}
           <button
             onClick={logout}
             className="flex items-center gap-3 px-3 py-2 rounded-md text-sm hover:bg-muted w-full"
