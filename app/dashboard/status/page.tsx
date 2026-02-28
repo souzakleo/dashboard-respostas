@@ -163,6 +163,14 @@ function formatDateTime(iso?: string | null) {
   }
 }
 
+function isStatusConsideredConcluded(row: Pick<StatusRow, "concluida" | "situacao_slug" | "situacao_nome">) {
+  if (row.concluida) return true;
+  const slug = (row.situacao_slug ?? "").toLowerCase();
+  const nome = (row.situacao_nome ?? "").toLowerCase();
+  const finalKeywords = ["concluido", "concluida", "resolvido", "resolvida", "finalizado", "finalizada"];
+  return finalKeywords.some((k) => slug.includes(k) || nome.includes(k));
+}
+
 function priorityPill(p: StatusRow["prioridade"]) {
   const base = "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium border";
   if (p === "Alta") return `${base} border-red-300 text-red-700 bg-red-50`;
@@ -581,7 +589,7 @@ useEffect(() => {
       if (error) throw error;
 
       let refreshedRows = await loadList();
-      let concludedNow = (refreshedRows ?? []).some((row) => row.id === statusId && row.concluida);
+      let concludedNow = (refreshedRows ?? []).some((row) => row.id === statusId && isStatusConsideredConcluded(row));
 
       if (!concludedNow) {
         const fallbackFinalSituacao = finalSituacoes.find((s) => s.id !== preferredFinalSituacao.id) ?? null;
@@ -594,7 +602,7 @@ useEffect(() => {
           if (fallbackResult.error) throw fallbackResult.error;
 
           refreshedRows = await loadList();
-          concludedNow = (refreshedRows ?? []).some((row) => row.id === statusId && row.concluida);
+          concludedNow = (refreshedRows ?? []).some((row) => row.id === statusId && isStatusConsideredConcluded(row));
         }
       }
 
@@ -758,7 +766,7 @@ useEffect(() => {
   }, [role, userId, rows]);
 
   const filteredRows = useMemo(
-    () => rows.filter((r) => (listTab === "ativos" ? !r.concluida : r.concluida)),
+    () => rows.filter((r) => (listTab === "ativos" ? !isStatusConsideredConcluded(r) : isStatusConsideredConcluded(r))),
     [rows, listTab]
   );
 
@@ -903,7 +911,7 @@ useEffect(() => {
             listTab === "ativos" ? "bg-slate-900 text-white border-slate-900" : "bg-white hover:bg-muted"
           }`}
         >
-          Ativos ({rows.filter((r) => !r.concluida).length})
+          Ativos ({rows.filter((r) => !isStatusConsideredConcluded(r)).length})
         </button>
         <button
           onClick={() => setListTab("concluidos")}
@@ -911,7 +919,7 @@ useEffect(() => {
             listTab === "concluidos" ? "bg-slate-900 text-white border-slate-900" : "bg-white hover:bg-muted"
           }`}
         >
-          Concluídos ({rows.filter((r) => r.concluida).length})
+          Concluídos ({rows.filter((r) => isStatusConsideredConcluded(r)).length})
         </button>
       </div>
 
@@ -982,7 +990,7 @@ useEffect(() => {
                                 🔔
                               </span>
                             )}
-                            {r.concluida && (
+                            {isStatusConsideredConcluded(r) && (
                               <span className="ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-xs border bg-emerald-50 text-emerald-700 border-emerald-200">
                                 Concluído
                               </span>
@@ -1037,7 +1045,7 @@ useEffect(() => {
                                     <select
                                       className="border rounded-md px-2 py-1 text-sm bg-background"
                                       value={r.situacao_id ?? ""}
-                                      disabled={r.concluida}
+                                      disabled={isStatusConsideredConcluded(r)}
                                       onClick={(e) => e.stopPropagation()}
                                       onChange={(e) => {
                                         e.stopPropagation();
@@ -1045,7 +1053,7 @@ useEffect(() => {
                                         if (!v) return;
                                         onSetSituacao(r.id, v);
                                       }}
-                                      title={r.concluida ? "Registro concluído. Reabra para alterar a situação." : ""}
+                                      title={isStatusConsideredConcluded(r) ? "Registro concluído. Reabra para alterar a situação." : ""}
                                     >
                                       <option value="">Definir situação...</option>
                                       {situacoes.map((s) => (
@@ -1066,7 +1074,7 @@ useEffect(() => {
                                     </div>
                                   )}
 
-                                  {canReopen() && r.concluida && (
+                                  {canReopen() && isStatusConsideredConcluded(r) && (
                                     <button
                                       className="px-3 py-1.5 rounded-md text-sm border bg-background hover:bg-muted"
                                       onClick={(e) => {
@@ -1162,7 +1170,7 @@ useEffect(() => {
                                       </div>
                                     )}
 
-                                    {hasReviewerConfirmationPending && !r.concluida && (
+                                    {hasReviewerConfirmationPending && !isStatusConsideredConcluded(r) && (
                                       <div className="border rounded-md p-3 bg-red-50 border-red-200 space-y-3">
                                         <div className="text-sm font-medium text-red-900 inline-flex items-center gap-2">
                                           <span aria-hidden="true">🔔</span>
