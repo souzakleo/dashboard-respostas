@@ -151,7 +151,7 @@ export default function DashboardLayout({
         </div>
 
         {/* Navigation */}
-        <div className="space-y-2 flex-1">
+        <div className="space-y-2">
           <NavItem
             href="/dashboard/respostas"
             label="Respostas"
@@ -172,18 +172,16 @@ export default function DashboardLayout({
           )}
         </div>
 
-        {/* User Info */}
-        {!collapsed && (
-          <div className="border-t pt-4 mt-4 text-sm">
-            <div className="font-medium">{userName}</div>
-            <div className="text-muted-foreground capitalize">
-              {role}
+        <div className="border-t mt-4 pt-4">
+          {/* User Info */}
+          {!collapsed && (
+            <div className="text-sm mb-3">
+              <div className="font-medium">{userName}</div>
+              <div className="text-muted-foreground capitalize">{role}</div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Logout */}
-        <div className="pt-3">
+          {/* Logout */}
           <button
             onClick={logout}
             className="flex items-center gap-3 px-3 py-2 rounded-md text-sm hover:bg-muted w-full"
