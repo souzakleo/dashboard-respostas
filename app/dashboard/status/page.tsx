@@ -198,6 +198,8 @@ export default function StatusPage() {
   const [commentText, setCommentText] = useState("");
   const [operatorPendingCount, setOperatorPendingCount] = useState(0);
   const [operatorPendingStatusIds, setOperatorPendingStatusIds] = useState<string[]>([]);
+  const [reviewerPendingCount, setReviewerPendingCount] = useState(0);
+  const [reviewerPendingStatusIds, setReviewerPendingStatusIds] = useState<string[]>([]);
   const [operatorUpdateText, setOperatorUpdateText] = useState("");
   const [sendingOperatorUpdate, setSendingOperatorUpdate] = useState(false);
   const [confirmingOperatorReply, setConfirmingOperatorReply] = useState(false);
@@ -499,6 +501,7 @@ useEffect(() => {
       setOperatorUpdateText("");
       if (expandedRow) await loadExpandedExtras(expandedRow);
       await loadOperatorPendingNotifications();
+      await loadReviewerPendingNotifications();
     } catch (e: any) {
       setErr(e?.message ?? "Erro ao enviar atualização ao operador");
     } finally {
@@ -517,6 +520,7 @@ useEffect(() => {
       if (error) throw error;
       if (expandedRow) await loadExpandedExtras(expandedRow);
       await loadOperatorPendingNotifications();
+      await loadReviewerPendingNotifications();
     } catch (e: any) {
       setErr(e?.message ?? "Erro ao confirmar envio ao usuário");
     } finally {
@@ -582,6 +586,65 @@ useEffect(() => {
     }
   }
 
+
+  async function loadReviewerPendingNotifications() {
+    if ((role !== "admin" && role !== "supervisor") || !userId) {
+      setReviewerPendingCount(0);
+      setReviewerPendingStatusIds([]);
+      return;
+    }
+
+    try {
+      const [updatesResp, confirmsResp] = await Promise.all([
+        supabase
+          .from("status_comments")
+          .select("status_id,comentario,created_by,created_at")
+          .eq("created_by", userId)
+          .ilike("comentario", `${OPERATOR_UPDATE_PREFIX}%`),
+        supabase
+          .from("status_comments")
+          .select("status_id,comentario,created_by,created_at")
+          .ilike("comentario", `${OPERATOR_CONFIRM_PREFIX}%`),
+      ]);
+
+      if (updatesResp.error) throw updatesResp.error;
+      if (confirmsResp.error) throw confirmsResp.error;
+
+      const updates = (updatesResp.data ?? []) as OperatorCommentRow[];
+      const confirms = (confirmsResp.data ?? []) as OperatorCommentRow[];
+
+      const latestUpdateByStatus = new Map<string, number>();
+      for (const item of updates) {
+        const ts = new Date(item.created_at).getTime();
+        const prev = latestUpdateByStatus.get(item.status_id) ?? 0;
+        if (ts > prev) latestUpdateByStatus.set(item.status_id, ts);
+      }
+
+      const latestConfirmByStatus = new Map<string, number>();
+      for (const item of confirms) {
+        const ts = new Date(item.created_at).getTime();
+        const prev = latestConfirmByStatus.get(item.status_id) ?? 0;
+        if (ts > prev) latestConfirmByStatus.set(item.status_id, ts);
+      }
+
+      let pending = 0;
+      const pendingStatusIds: string[] = [];
+      for (const [statusId, updateTs] of latestUpdateByStatus.entries()) {
+        const confirmTs = latestConfirmByStatus.get(statusId) ?? 0;
+        if (confirmTs > updateTs) {
+          pending += 1;
+          pendingStatusIds.push(statusId);
+        }
+      }
+
+      setReviewerPendingCount(pending);
+      setReviewerPendingStatusIds(pendingStatusIds);
+    } catch {
+      setReviewerPendingCount(0);
+      setReviewerPendingStatusIds([]);
+    }
+  }
+
   function openCreate() {
     setEditing(null);
     setOpenForm(true);
@@ -594,6 +657,7 @@ useEffect(() => {
 
   useEffect(() => {
     loadOperatorPendingNotifications();
+    loadReviewerPendingNotifications();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [role, userId, rows]);
 
@@ -650,6 +714,24 @@ useEffect(() => {
             >
               <span aria-hidden="true">🔔</span>
               <span>{operatorPendingCount}</span>
+            </div>
+          )}
+
+          {(role === "admin" || role === "supervisor") && (
+            <div
+              className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md border text-sm ${
+                reviewerPendingCount > 0
+                  ? "border-red-200 bg-red-50 text-red-700"
+                  : "border-slate-200 bg-white text-slate-500"
+              }`}
+              title={
+                reviewerPendingCount > 0
+                  ? "Operador confirmou respostas pendentes de conclusão"
+                  : "Sem confirmações pendentes"
+              }
+            >
+              <span aria-hidden="true">🔔</span>
+              <span>{reviewerPendingCount}</span>
             </div>
           )}
 
@@ -761,6 +843,8 @@ useEffect(() => {
                     ? `${r.situacao_nome}${r.situacao_por_nome ? ` — (${r.situacao_por_nome})` : ""}`
                     : "—";
                   const hasOperatorUpdate = role === "operador" && operatorPendingStatusIds.includes(r.id);
+                  const hasReviewerUpdate = (role === "admin" || role === "supervisor") && reviewerPendingStatusIds.includes(r.id);
+                  const hasPendingNotification = hasOperatorUpdate || hasReviewerUpdate;
 
                   return (
                     <React.Fragment key={r.id}>
@@ -785,9 +869,9 @@ useEffect(() => {
                           <span className="inline-flex items-center gap-2" title={r.situacao_em ? `Definido em ${formatDateTime(r.situacao_em)}` : ""}>
                             <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: r.situacao_cor ?? "#94a3b8" }} />
                             <span>{situacaoLabel}</span>
-                            {hasOperatorUpdate && (
-                              <span className="inline-flex items-center rounded-full bg-red-100 text-red-700 px-2 py-0.5 text-xs font-medium" title="Você tem atualização pendente neste status">
-                                🔔 Atualização
+                            {hasPendingNotification && (
+                              <span className="inline-flex items-center rounded-full bg-red-100 text-red-700 px-2 py-0.5 text-xs font-medium" title={hasOperatorUpdate ? "Você tem atualização pendente neste status" : "Operador confirmou envio e aguarda sua decisão de conclusão"}>
+                                🔔
                               </span>
                             )}
                             {r.concluida && (
