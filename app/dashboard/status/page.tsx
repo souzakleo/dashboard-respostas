@@ -140,6 +140,9 @@ const PROBLEMATICAS = [
 
 const PRIORIDADES: Array<StatusRow["prioridade"]> = ["Alta", "Média", "Baixa"];
 
+const OPERATOR_UPDATE_PREFIX = "[ATUALIZAÇÃO AO OPERADOR]";
+const OPERATOR_CONFIRM_PREFIX = "[CONFIRMAÇÃO OPERADOR]";
+
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
@@ -186,6 +189,9 @@ export default function StatusPage() {
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
   const [comments, setComments] = useState<CommentRow[]>([]);
   const [commentText, setCommentText] = useState("");
+  const [operatorUpdateText, setOperatorUpdateText] = useState("");
+  const [sendingOperatorUpdate, setSendingOperatorUpdate] = useState(false);
+  const [confirmingOperatorReply, setConfirmingOperatorReply] = useState(false);
 
   const [editing, setEditing] = useState<StatusRow | null>(null);
   const [openForm, setOpenForm] = useState(false);
@@ -341,6 +347,7 @@ useEffect(() => {
 
 
   useEffect(() => {
+    setOperatorUpdateText("");
     (async () => {
       if (!expandedRow) return;
       try {
@@ -465,6 +472,44 @@ useEffect(() => {
       await loadExpandedExtras(expandedRow);
     } catch (e: any) {
       setErr(e?.message ?? "Erro ao comentar");
+    }
+  }
+
+  async function onNotifyOperator(statusId: string) {
+    const txt = operatorUpdateText.trim();
+    if (!txt) return;
+
+    setSendingOperatorUpdate(true);
+    setErr(null);
+    try {
+      const { error } = await supabase.rpc("status_add_comment", {
+        p_status_id: statusId,
+        p_comentario: `${OPERATOR_UPDATE_PREFIX} ${txt}`,
+      });
+      if (error) throw error;
+      setOperatorUpdateText("");
+      if (expandedRow) await loadExpandedExtras(expandedRow);
+    } catch (e: any) {
+      setErr(e?.message ?? "Erro ao enviar atualização ao operador");
+    } finally {
+      setSendingOperatorUpdate(false);
+    }
+  }
+
+  async function onOperatorConfirmReplySent(statusId: string) {
+    setConfirmingOperatorReply(true);
+    setErr(null);
+    try {
+      const { error } = await supabase.rpc("status_add_comment", {
+        p_status_id: statusId,
+        p_comentario: `${OPERATOR_CONFIRM_PREFIX} Resposta enviada ao usuário.`,
+      });
+      if (error) throw error;
+      if (expandedRow) await loadExpandedExtras(expandedRow);
+    } catch (e: any) {
+      setErr(e?.message ?? "Erro ao confirmar envio ao usuário");
+    } finally {
+      setConfirmingOperatorReply(false);
     }
   }
 
@@ -768,6 +813,75 @@ useEffect(() => {
                                   )}
                                 </div>
                               </div>
+
+                              {isExpanded && (() => {
+                                const operatorUpdates = comments.filter((c) => c.comentario?.startsWith(OPERATOR_UPDATE_PREFIX));
+                                const latestOperatorUpdate = operatorUpdates[0] ?? null;
+                                const updateText = latestOperatorUpdate
+                                  ? latestOperatorUpdate.comentario.replace(OPERATOR_UPDATE_PREFIX, "").trim()
+                                  : "";
+                                const operatorConfirmations = comments.filter(
+                                  (c) => c.comentario?.startsWith(OPERATOR_CONFIRM_PREFIX) && c.created_by === userId
+                                );
+                                const latestOperatorConfirmation = operatorConfirmations[0] ?? null;
+                                const hasPendingOperatorUpdate =
+                                  role === "operador" &&
+                                  !!latestOperatorUpdate &&
+                                  (!latestOperatorConfirmation ||
+                                    new Date(latestOperatorConfirmation.created_at).getTime() <
+                                      new Date(latestOperatorUpdate.created_at).getTime());
+
+                                return (
+                                  <div className="space-y-2">
+                                    {(role === "admin" || role === "supervisor") && (
+                                      <div className="border rounded-md p-3 bg-slate-50">
+                                        <div className="text-sm font-medium mb-2">Atualização para Operador</div>
+                                        <div className="flex gap-2 flex-wrap">
+                                          <input
+                                            value={operatorUpdateText}
+                                            onChange={(e) => setOperatorUpdateText(e.target.value)}
+                                            placeholder="Descreva a atualização do caso para o operador"
+                                            className="flex-1 min-w-[260px] border rounded-md px-3 py-2 text-sm bg-background"
+                                          />
+                                          <button
+                                            className="px-3 py-2 rounded-md text-sm border bg-background hover:bg-muted disabled:opacity-60"
+                                            disabled={sendingOperatorUpdate || !operatorUpdateText.trim()}
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              onNotifyOperator(r.id);
+                                            }}
+                                          >
+                                            {sendingOperatorUpdate ? "Enviando..." : "Notificar Operador"}
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {role === "operador" && latestOperatorUpdate && (
+                                      <div className="border rounded-md p-3 bg-amber-50 border-amber-200">
+                                        <div className="text-sm font-medium text-amber-900">Atualização recebida</div>
+                                        <div className="text-sm text-amber-900 mt-1">{updateText || "Sem detalhes"}</div>
+                                        <label className="mt-3 flex items-center gap-2 text-sm">
+                                          <input
+                                            type="checkbox"
+                                            checked={!hasPendingOperatorUpdate}
+                                            disabled={!hasPendingOperatorUpdate || confirmingOperatorReply}
+                                            onChange={(e) => {
+                                              e.stopPropagation();
+                                              if (e.target.checked) onOperatorConfirmReplySent(r.id);
+                                            }}
+                                          />
+                                          <span>
+                                            {hasPendingOperatorUpdate
+                                              ? "Marcar que a resposta foi enviada ao usuário"
+                                              : "Resposta ao usuário já confirmada"}
+                                          </span>
+                                        </label>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
 
                               {tab === "historico" && (
                                 <div className="border rounded-lg overflow-hidden">
