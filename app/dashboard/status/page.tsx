@@ -197,6 +197,7 @@ export default function StatusPage() {
   const [comments, setComments] = useState<CommentRow[]>([]);
   const [commentText, setCommentText] = useState("");
   const [operatorPendingCount, setOperatorPendingCount] = useState(0);
+  const [operatorPendingStatusIds, setOperatorPendingStatusIds] = useState<string[]>([]);
   const [operatorUpdateText, setOperatorUpdateText] = useState("");
   const [sendingOperatorUpdate, setSendingOperatorUpdate] = useState(false);
   const [confirmingOperatorReply, setConfirmingOperatorReply] = useState(false);
@@ -526,6 +527,7 @@ useEffect(() => {
   async function loadOperatorPendingNotifications() {
     if (role !== "operador" || !userId) {
       setOperatorPendingCount(0);
+      setOperatorPendingStatusIds([]);
       return;
     }
 
@@ -563,14 +565,20 @@ useEffect(() => {
       }
 
       let pending = 0;
+      const pendingStatusIds: string[] = [];
       for (const [statusId, updateTs] of latestUpdateByStatus.entries()) {
         const confirmTs = latestConfirmByStatus.get(statusId) ?? 0;
-        if (confirmTs < updateTs) pending += 1;
+        if (confirmTs < updateTs) {
+          pending += 1;
+          pendingStatusIds.push(statusId);
+        }
       }
 
       setOperatorPendingCount(pending);
+      setOperatorPendingStatusIds(pendingStatusIds);
     } catch {
       setOperatorPendingCount(0);
+      setOperatorPendingStatusIds([]);
     }
   }
 
@@ -752,6 +760,7 @@ useEffect(() => {
                   const situacaoLabel = r.situacao_nome
                     ? `${r.situacao_nome}${r.situacao_por_nome ? ` — (${r.situacao_por_nome})` : ""}`
                     : "—";
+                  const hasOperatorUpdate = role === "operador" && operatorPendingStatusIds.includes(r.id);
 
                   return (
                     <React.Fragment key={r.id}>
@@ -776,6 +785,11 @@ useEffect(() => {
                           <span className="inline-flex items-center gap-2" title={r.situacao_em ? `Definido em ${formatDateTime(r.situacao_em)}` : ""}>
                             <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: r.situacao_cor ?? "#94a3b8" }} />
                             <span>{situacaoLabel}</span>
+                            {hasOperatorUpdate && (
+                              <span className="inline-flex items-center rounded-full bg-red-100 text-red-700 px-2 py-0.5 text-xs font-medium" title="Você tem atualização pendente neste status">
+                                🔔 Atualização
+                              </span>
+                            )}
                             {r.concluida && (
                               <span className="ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-xs border bg-emerald-50 text-emerald-700 border-emerald-200">
                                 Concluído
