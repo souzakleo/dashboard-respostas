@@ -572,7 +572,8 @@ useEffect(() => {
       });
       if (error) throw error;
       await loadList();
-      setExpandedId(statusId);
+      setListTab("concluidos");
+      setExpandedId(null);
       await loadOperatorPendingNotifications();
       await loadReviewerPendingNotifications();
     } catch (e: any) {
