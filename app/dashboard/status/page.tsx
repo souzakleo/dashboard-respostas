@@ -119,10 +119,16 @@ const OPERATOR_CONFIRM_PREFIX = "[CONFIRMAÇÃO OPERADOR]";
 const OPERATOR_ACK_PREFIX = "[CIENTE OPERADOR]";
 const OPERATOR_SENT_PREFIX = "[RESPOSTA ENVIADA OPERADOR]";
 
-const OPERATOR_NOTIFICATION_OPTIONS = [
+const DEFAULT_OPERATOR_NOTIFICATION_OPTIONS = [
   "Verificar situação com Coordenação de Habilitação",
   "Verificar situação com Coordenação de Veículos",
   "Verificar situação com Unidade de Administração",
+] as const;
+
+const DEFAULT_OPERATOR_RESPONSE_OPTIONS = [
+  "Ciente",
+  "Código AR informado pela Unidade de Administração",
+  "Resposta enviada ao usuário",
 ] as const;
 
 function pad2(n: number) {
@@ -132,10 +138,15 @@ function pad2(n: number) {
 function formatDateTime(iso?: string | null) {
   if (!iso) return "";
   try {
-    return new Date(iso).toLocaleString();
+    return new Date(iso).toLocaleString("pt-BR");
   } catch {
     return iso;
   }
+}
+
+function isUuidLike(value: string | null | undefined) {
+  if (!value) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 function isStatusConsideredConcluded(
@@ -187,6 +198,12 @@ export default function StatusPage() {
   const [reviewerPendingStatusIds, setReviewerPendingStatusIds] = useState<string[]>([]);
 
   const [notificationOptionByStatus, setNotificationOptionByStatus] = useState<Record<string, string>>({});
+  const [operatorReplyTextByStatus, setOperatorReplyTextByStatus] = useState<Record<string, string>>({});
+  const [operatorNotificationOptions, setOperatorNotificationOptions] = useState<string[]>([...DEFAULT_OPERATOR_NOTIFICATION_OPTIONS]);
+  const [operatorResponseOptions, setOperatorResponseOptions] = useState<string[]>([...DEFAULT_OPERATOR_RESPONSE_OPTIONS]);
+  const [newNotificationOption, setNewNotificationOption] = useState("");
+  const [newResponseOption, setNewResponseOption] = useState("");
+  const [userNameById, setUserNameById] = useState<Record<string, string>>({});
   const [sendingNotify, setSendingNotify] = useState(false);
   const [confirmingOperatorReply, setConfirmingOperatorReply] = useState(false);
 
@@ -303,6 +320,60 @@ export default function StatusPage() {
     });
   }
 
+
+
+  async function loadUserNames(ids: string[]) {
+    const uniq = Array.from(new Set(ids.filter(Boolean)));
+    if (uniq.length === 0) return;
+
+    const unknown = uniq.filter((id) => !userNameById[id]);
+    if (unknown.length === 0) return;
+
+    const { data, error } = await supabase.from("user_profiles").select("user_id,nome").in("user_id", unknown);
+    if (error) return;
+
+    const next: Record<string, string> = {};
+    (data ?? []).forEach((r: any) => {
+      next[r.user_id] = r.nome ?? r.user_id;
+    });
+    setUserNameById((prev) => ({ ...prev, ...next }));
+  }
+
+  function translateTimelineAction(item: TimelineItem) {
+    const acao = (item.acao ?? "").toLowerCase();
+    if (acao === "comment") return "Comentário";
+    if (acao === "update_field") return "Campo atualizado";
+    if (acao === "create") return "Criação";
+    if (acao === "resolve") return "Concluído";
+    if (acao === "reopen") return "Reaberto";
+    if (acao === "delete") return "Excluído";
+    return item.acao;
+  }
+
+  function translateTimelineField(campo?: string | null) {
+    const c = (campo ?? "").toLowerCase();
+    if (!c) return null;
+    if (c === "situacao_id") return "Situação";
+    if (c === "concluida") return "Concluída";
+    if (c === "operador_id") return "Operador";
+    if (c === "prioridade") return "Prioridade";
+    return campo;
+  }
+
+  function translateTimelineValue(campo: string | null, value: string | null) {
+    if (value == null || value === "") return "—";
+    const c = (campo ?? "").toLowerCase();
+    if (c === "situacao_id") {
+      const found = situacoes.find((s) => s.id === value);
+      return found?.nome ?? value;
+    }
+    if (c === "concluida") {
+      if (value === "true") return "Sim";
+      if (value === "false") return "Não";
+    }
+    if (isUuidLike(value)) return userNameById[value] ?? value;
+    return value;
+  }
   async function loadExpandedExtras(row: StatusRow) {
     const c = await supabase
       .from("status_comments")
@@ -310,11 +381,20 @@ export default function StatusPage() {
       .eq("status_id", row.id)
       .order("created_at", { ascending: false });
     if (c.error) throw c.error;
-    setComments((c.data ?? []) as CommentRow[]);
+    const nextComments = (c.data ?? []) as CommentRow[];
+    setComments(nextComments);
 
     const t = await supabase.rpc("status_timeline", { p_status_id: row.id });
     if (t.error) throw t.error;
-    setTimeline((t.data ?? []) as TimelineItem[]);
+    const nextTimeline = (t.data ?? []) as TimelineItem[];
+    setTimeline(nextTimeline);
+
+    const ids = [
+      ...nextComments.map((item) => item.created_by),
+      ...nextTimeline.map((item) => item.feito_por),
+      row.operador_id,
+    ].filter((id) => Boolean(id) && isUuidLike(id));
+    await loadUserNames(ids as string[]);
   }
 
   function filterOutConcluded(ids: string[]) {
@@ -440,6 +520,36 @@ export default function StatusPage() {
     loadMe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const notifyRaw = window.localStorage.getItem("status_operator_notification_options");
+    const responseRaw = window.localStorage.getItem("status_operator_response_options");
+
+    if (notifyRaw) {
+      try {
+        const parsed = JSON.parse(notifyRaw);
+        if (Array.isArray(parsed) && parsed.length > 0) setOperatorNotificationOptions(parsed.filter(Boolean));
+      } catch {}
+    }
+
+    if (responseRaw) {
+      try {
+        const parsed = JSON.parse(responseRaw);
+        if (Array.isArray(parsed) && parsed.length > 0) setOperatorResponseOptions(parsed.filter(Boolean));
+      } catch {}
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("status_operator_notification_options", JSON.stringify(operatorNotificationOptions));
+  }, [operatorNotificationOptions]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("status_operator_response_options", JSON.stringify(operatorResponseOptions));
+  }, [operatorResponseOptions]);
 
   useEffect(() => {
     (async () => {
@@ -574,10 +684,39 @@ export default function StatusPage() {
     }
   }
 
+
+
+  function addNotificationOption() {
+    const value = newNotificationOption.trim();
+    if (!value) return;
+    if (operatorNotificationOptions.includes(value)) return;
+    setOperatorNotificationOptions((prev) => [...prev, value]);
+    setNewNotificationOption("");
+  }
+
+  function removeNotificationOption(value: string) {
+    setOperatorNotificationOptions((prev) => prev.filter((item) => item !== value));
+  }
+
+  function addResponseOption() {
+    const value = newResponseOption.trim();
+    if (!value) return;
+    if (operatorResponseOptions.includes(value)) return;
+    setOperatorResponseOptions((prev) => [...prev, value]);
+    setNewResponseOption("");
+  }
+
+  function removeResponseOption(value: string) {
+    setOperatorResponseOptions((prev) => prev.filter((item) => item !== value));
+  }
   async function onNotifyOperatorFromOption(statusId: string) {
     if (role !== "admin" && role !== "supervisor") return;
 
     const opt = (notificationOptionByStatus[statusId] ?? "").trim();
+    if (!operatorNotificationOptions.includes(opt)) {
+      setErr("Opção de notificação inválida.");
+      return;
+    }
     if (!opt) {
       setErr("Selecione uma opção de notificação ao Operador antes de notificar.");
       return;
@@ -669,14 +808,21 @@ export default function StatusPage() {
     }
   }
 
-  async function onOperatorRegisterAction(statusId: string, action: "ciente" | "resposta_enviada") {
+  async function onOperatorRegisterAction(statusId: string, actionLabel: string) {
+    const label = actionLabel.trim();
+    if (!label) return;
+    if (!operatorResponseOptions.includes(label)) {
+      setErr("Opção de resposta inválida.");
+      return;
+    }
+
     setConfirmingOperatorReply(true);
     setErr(null);
     try {
-      const comment =
-        action === "ciente"
-          ? `${OPERATOR_ACK_PREFIX} Operador ciente da atualização.`
-          : `${OPERATOR_SENT_PREFIX} Resposta enviada ao usuário.`;
+      const details = (operatorReplyTextByStatus[statusId] ?? "").trim();
+      const isSent = label.toLowerCase() === "resposta enviada ao usuário";
+      const prefix = isSent ? OPERATOR_SENT_PREFIX : OPERATOR_CONFIRM_PREFIX;
+      const comment = `${prefix} ${label}${details ? `: ${details}` : ""}`;
 
       const { error } = await supabase.rpc("status_add_comment", {
         p_status_id: statusId,
@@ -684,6 +830,7 @@ export default function StatusPage() {
       });
       if (error) throw error;
 
+      setOperatorReplyTextByStatus((prev) => ({ ...prev, [statusId]: "" }));
       if (expandedRow?.id === statusId) await loadExpandedExtras(expandedRow);
       await Promise.all([loadOperatorPendingNotifications(), loadReviewerPendingNotifications()]);
     } catch (e: any) {
@@ -774,6 +921,53 @@ export default function StatusPage() {
         <div className="border border-amber-200 bg-amber-50 text-amber-900 rounded-md p-3 text-sm">
           Ao salvar um novo Status, ele será repassado para Supervisor e Administrador. Após salvar, você não poderá editar.
         </div>
+      )}
+
+
+      {(role === "admin" || role === "supervisor") && (
+        <details className="border rounded-md p-3 bg-muted/20">
+          <summary className="cursor-pointer text-sm font-medium">Painel de respostas do módulo Status</summary>
+          <div className="mt-3 grid md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <div className="text-sm font-medium">Opções de notificação para Operador</div>
+              <div className="flex gap-2">
+                <input
+                  className="flex-1 border rounded-md px-3 py-2 text-sm"
+                  placeholder="Nova opção para o Supervisor/Administrador"
+                  value={newNotificationOption}
+                  onChange={(e) => setNewNotificationOption(e.target.value)}
+                />
+                <button className="border rounded-md px-3 py-2 text-sm" onClick={addNotificationOption}>Adicionar</button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {operatorNotificationOptions.map((opt) => (
+                  <button key={opt} className="text-xs border rounded-full px-3 py-1" onClick={() => removeNotificationOption(opt)} title="Remover opção">
+                    {opt} ✕
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <div className="text-sm font-medium">Opções de resposta do Operador</div>
+              <div className="flex gap-2">
+                <input
+                  className="flex-1 border rounded-md px-3 py-2 text-sm"
+                  placeholder="Nova opção para o Operador"
+                  value={newResponseOption}
+                  onChange={(e) => setNewResponseOption(e.target.value)}
+                />
+                <button className="border rounded-md px-3 py-2 text-sm" onClick={addResponseOption}>Adicionar</button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {operatorResponseOptions.map((opt) => (
+                  <button key={opt} className="text-xs border rounded-full px-3 py-1" onClick={() => removeResponseOption(opt)} title="Remover opção">
+                    {opt} ✕
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </details>
       )}
 
       {summary && (
@@ -953,7 +1147,7 @@ export default function StatusPage() {
                                             }}
                                           >
                                             <option value="">Notificação ao Operador...</option>
-                                            {OPERATOR_NOTIFICATION_OPTIONS.map((opt) => (
+                                            {operatorNotificationOptions.map((opt) => (
                                               <option key={opt} value={opt}>
                                                 {opt}
                                               </option>
@@ -1032,30 +1226,28 @@ export default function StatusPage() {
                               {role === "operador" && operatorPendingStatusIds.includes(r.id) && (
                                 <div className="border rounded-md p-3 bg-amber-50 border-amber-200">
                                   <div className="text-sm font-medium text-amber-900">Atualização recebida</div>
-                                  <div className="text-sm text-amber-900 mt-1">
-                                    Existe uma atualização pendente. Marque uma ação:
-                                  </div>
+                                  <div className="text-sm text-amber-900 mt-1">Existe uma atualização pendente. Selecione uma opção de resposta:</div>
+                                  <input
+                                    className="mt-3 w-full border rounded-md px-3 py-2 text-sm bg-background"
+                                    placeholder="Detalhes (ex.: código AR informado)"
+                                    value={operatorReplyTextByStatus[r.id] ?? ""}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onChange={(e) => setOperatorReplyTextByStatus((prev) => ({ ...prev, [r.id]: e.target.value }))}
+                                  />
                                   <div className="mt-3 flex items-center gap-2 flex-wrap">
-                                    <button
-                                      className="px-3 py-2 rounded-md text-sm border bg-background hover:bg-muted disabled:opacity-60"
-                                      disabled={confirmingOperatorReply}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        onOperatorRegisterAction(r.id, "ciente");
-                                      }}
-                                    >
-                                      Ciente
-                                    </button>
-                                    <button
-                                      className="px-3 py-2 rounded-md text-sm border bg-background hover:bg-muted disabled:opacity-60"
-                                      disabled={confirmingOperatorReply}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        onOperatorRegisterAction(r.id, "resposta_enviada");
-                                      }}
-                                    >
-                                      Resposta enviada ao usuário
-                                    </button>
+                                    {operatorResponseOptions.map((option) => (
+                                      <button
+                                        key={option}
+                                        className="px-3 py-2 rounded-md text-sm border bg-background hover:bg-muted disabled:opacity-60"
+                                        disabled={confirmingOperatorReply}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          onOperatorRegisterAction(r.id, option);
+                                        }}
+                                      >
+                                        {option}
+                                      </button>
+                                    ))}
                                   </div>
                                 </div>
                               )}
@@ -1080,7 +1272,12 @@ export default function StatusPage() {
                                     ) : (
                                       comments.map((c) => (
                                         <div key={c.id} className="border rounded-md p-3">
-                                          <div className="text-xs text-muted-foreground">{formatDateTime(c.created_at)}</div>
+                                          <div className="flex items-center justify-between gap-2">
+                                            <div className="text-xs text-muted-foreground">{formatDateTime(c.created_at)}</div>
+                                            <div className="text-xs text-muted-foreground">
+                                              Por: {userNameById[c.created_by] ?? c.created_by} • Para: {r.operador_nome ?? userNameById[r.operador_id] ?? "Operador"}
+                                            </div>
+                                          </div>
                                           <div className="text-sm whitespace-pre-wrap">{c.comentario}</div>
                                         </div>
                                       ))
@@ -1096,18 +1293,18 @@ export default function StatusPage() {
                                       <div key={t.id} className="border rounded-md p-3">
                                         <div className="flex items-center justify-between gap-2 flex-wrap">
                                           <div className="text-sm font-medium">
-                                            {t.acao}
-                                            {t.campo ? ` • ${t.campo}` : ""}
+                                            {translateTimelineAction(t)}
+                                            {translateTimelineField(t.campo) ? ` • ${translateTimelineField(t.campo)}` : ""}
                                           </div>
                                           <div className="text-xs text-muted-foreground">{formatDateTime(t.feito_em)}</div>
                                         </div>
-                                        <div className="text-xs text-muted-foreground">Por: {t.feito_por_nome ?? t.feito_por}</div>
+                                        <div className="text-xs text-muted-foreground">Por: {t.feito_por_nome ?? userNameById[t.feito_por] ?? t.feito_por}</div>
                                         {(t.valor_antigo || t.valor_novo) && (
                                           <div className="mt-2 text-sm">
                                             <div className="text-xs text-muted-foreground">De:</div>
-                                            <div className="font-mono text-xs whitespace-pre-wrap">{t.valor_antigo ?? "—"}</div>
+                                            <div className="text-xs whitespace-pre-wrap">{translateTimelineValue(t.campo, t.valor_antigo)}</div>
                                             <div className="mt-1 text-xs text-muted-foreground">Para:</div>
-                                            <div className="font-mono text-xs whitespace-pre-wrap">{t.valor_novo ?? "—"}</div>
+                                            <div className="text-xs whitespace-pre-wrap">{translateTimelineValue(t.campo, t.valor_novo)}</div>
                                           </div>
                                         )}
                                       </div>
