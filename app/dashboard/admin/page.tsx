@@ -272,8 +272,8 @@ export default function AdminPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold">Administração</h1>
-        <p className="text-sm text-slate-500">Gerencie usuários e permissões do sistema.</p>
+        <h1 className="text-2xl font-semibold">Usuários</h1>
+<p className="text-sm text-slate-500">Gerencie usuários e permissões do sistema.</p>
       </div>
 
       <section className="bg-white rounded-xl border p-4 space-y-3">
