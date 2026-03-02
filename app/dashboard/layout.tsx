@@ -11,6 +11,7 @@ import {
   Shield,
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import SidebarAdminSection from "./components/SidebarAdminSection";
 
 function normalizeRole(value: unknown) {
   const v = String(value ?? "").trim().toLowerCase();
@@ -166,13 +167,7 @@ export default function DashboardLayout({
             icon={ClipboardList}
           />
 
-          {role === "admin" && (
-            <NavItem
-              href="/dashboard/admin"
-              label="Administração"
-              icon={Shield}
-            />
-          )}
+          {role === "admin" && <SidebarAdminSection />}
         </div>
 
         <div className="border-t mt-4 pt-4">

@@ -7,35 +7,12 @@ import { supabase } from "@/lib/supabase";
 function onlyDigits(v: string) {
   return (v ?? "").replace(/\D/g, "");
 }
-function normalizeRole(r: any): Role {
-  const v = String(r ?? "").toLowerCase();
-
-  // aceita PT e EN
-  if (v === "admin") return "admin";
-  if (v === "supervisor") return "supervisor";
-
-  if (v === "operador" || v === "operator") return "operador";
-  if (v === "leitor" || v === "reader") return "leitor";
-
-  // fallback seguro
-  return "leitor";
-}
-
-function resolveRoleFromCandidates(...values: unknown[]): Role {
-  const normalized = values.map((v) => normalizeRole(v));
-  if (normalized.includes("admin")) return "admin";
-  if (normalized.includes("supervisor")) return "supervisor";
-  if (normalized.includes("operador")) return "operador";
-  return "leitor";
-}
-
 function formatCPF(v: string) {
   const d = onlyDigits(v).slice(0, 11);
   const p1 = d.slice(0, 3);
   const p2 = d.slice(3, 6);
   const p3 = d.slice(6, 9);
   const p4 = d.slice(9, 11);
-
   if (d.length <= 3) return p1;
   if (d.length <= 6) return `${p1}.${p2}`;
   if (d.length <= 9) return `${p1}.${p2}.${p3}`;
@@ -43,6 +20,22 @@ function formatCPF(v: string) {
 }
 
 type Role = "admin" | "supervisor" | "operador" | "leitor";
+
+function normalizeRole(r: any): Role {
+  const v = String(r ?? "").trim().toLowerCase();
+  if (v === "admin") return "admin";
+  if (v === "supervisor") return "supervisor";
+  if (v === "operador" || v === "operator") return "operador";
+  if (v === "leitor" || v === "reader") return "leitor";
+  return "leitor";
+}
+function resolveRoleFromCandidates(...values: unknown[]): Role {
+  const normalized = values.map((v) => normalizeRole(v));
+  if (normalized.includes("admin")) return "admin";
+  if (normalized.includes("supervisor")) return "supervisor";
+  if (normalized.includes("operador")) return "operador";
+  return "leitor";
+}
 
 type Situacao = {
   id: string;
@@ -98,32 +91,6 @@ type CommentRow = {
   created_at: string;
 };
 
-type OperatorCommentRow = {
-  status_id: string;
-  comentario: string;
-  created_by: string;
-  created_at: string;
-};
-
-type HistoryRow = {
-  id: string;
-  cpf: string;
-  nome_usuario: string;
-  problematica: string;
-  problematica_outro: string | null;
-  prioridade: "Alta" | "Média" | "Baixa";
-  situacao_nome: string | null;
-  situacao_por_nome: string | null;
-  situacao_em: string | null;
-  operador_id: string;
-  operador_nome: string | null;
-  atualizado_em: string;
-  concluida: boolean;
-  concluida_em: string | null;
-  ano: number;
-  mes: number;
-};
-
 type Summary = {
   total: number;
   abertas: number;
@@ -171,7 +138,9 @@ function formatDateTime(iso?: string | null) {
   }
 }
 
-function isStatusConsideredConcluded(row: Pick<StatusRow, "concluida" | "situacao_slug" | "situacao_nome">) {
+function isStatusConsideredConcluded(
+  row: Pick<StatusRow, "concluida" | "situacao_slug" | "situacao_nome">
+) {
   if (row.concluida) return true;
   const slug = (row.situacao_slug ?? "").toLowerCase();
   const nome = (row.situacao_nome ?? "").toLowerCase();
@@ -207,30 +176,56 @@ export default function StatusPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const expandedRow = useMemo(() => rows.find((r) => r.id === expandedId) ?? null, [rows, expandedId]);
 
-  const [tab, setTab] = useState<"historico" | "comentarios" | "timeline">("historico");
-  const [history, setHistory] = useState<HistoryRow[]>([]);
+  const [tab, setTab] = useState<"comentarios" | "timeline">("comentarios");
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
   const [comments, setComments] = useState<CommentRow[]>([]);
   const [commentText, setCommentText] = useState("");
+
   const [operatorPendingCount, setOperatorPendingCount] = useState(0);
   const [operatorPendingStatusIds, setOperatorPendingStatusIds] = useState<string[]>([]);
   const [reviewerPendingCount, setReviewerPendingCount] = useState(0);
   const [reviewerPendingStatusIds, setReviewerPendingStatusIds] = useState<string[]>([]);
-  const [operatorUpdateText, setOperatorUpdateText] = useState("");
+
   const [notificationOptionByStatus, setNotificationOptionByStatus] = useState<Record<string, string>>({});
-  const [sendingOperatorUpdate, setSendingOperatorUpdate] = useState(false);
+  const [sendingNotify, setSendingNotify] = useState(false);
   const [confirmingOperatorReply, setConfirmingOperatorReply] = useState(false);
 
-  const [editing, setEditing] = useState<StatusRow | null>(null);
   const [openForm, setOpenForm] = useState(false);
+  const [editing, setEditing] = useState<StatusRow | null>(null);
   const [listTab, setListTab] = useState<"ativos" | "concluidos">("ativos");
+
+  // Concluir (modal)
+  const [confirmResolveId, setConfirmResolveId] = useState<string | null>(null);
+  const [isResolving, setIsResolving] = useState(false);
+
+  // Criar (modal para operador)
+  const [confirmCreatePayload, setConfirmCreatePayload] = useState<{
+    id?: string | null;
+    cpf: string;
+    nome_usuario: string;
+    problematica: string;
+    problematica_outro?: string;
+    prioridade: StatusRow["prioridade"];
+    ano: number;
+    mes: number;
+  } | null>(null);
+  const [isSavingCreate, setIsSavingCreate] = useState(false);
 
   const years = useMemo(() => {
     const y = defaultAno;
     return [y - 2, y - 1, y, y + 1];
   }, [defaultAno]);
-
   const months = useMemo(() => Array.from({ length: 12 }, (_, i) => i + 1), []);
+
+  function canEdit() {
+    return role === "admin" || role === "supervisor";
+  }
+  function canDelete() {
+    return role === "admin";
+  }
+  function canReopen() {
+    return role === "admin" || role === "supervisor";
+  }
 
   async function loadMe() {
     try {
@@ -243,11 +238,7 @@ export default function StatusPage() {
         return;
       }
 
-      const { data: roleTableRow } = await supabase
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", uid)
-        .maybeSingle();
+      const { data: roleTableRow } = await supabase.from("user_roles").select("role").eq("user_id", uid).maybeSingle();
 
       const { data: profileRow } = await supabase
         .from("user_profiles")
@@ -256,26 +247,19 @@ export default function StatusPage() {
         .maybeSingle();
 
       const profile = (profileRow ?? {}) as { role?: unknown; perfil?: unknown; tipo?: unknown };
-      const resolvedRole = resolveRoleFromCandidates(
-        roleTableRow?.role,
-        profile.role,
-        profile.perfil,
-        profile.tipo,
-        "operador"
-      );
-
-      setRole(resolvedRole);
+      const resolved = resolveRoleFromCandidates(roleTableRow?.role, profile.role, profile.perfil, profile.tipo, "operador");
+      setRole(resolved);
     } finally {
       setRoleLoading(false);
     }
   }
+
   async function loadSituacoes() {
     const { data, error } = await supabase
       .from("status_situacoes")
       .select("id,nome,slug,cor,ordem,ativa,finaliza,exige_responsavel")
       .eq("ativa", true)
       .order("ordem", { ascending: true });
-
     if (error) throw error;
     setSituacoes((data ?? []) as Situacao[]);
   }
@@ -286,9 +270,9 @@ export default function StatusPage() {
     try {
       const { data, error } = await supabase.rpc("status_list_latest_by_cpf", { p_ano: ano, p_mes: mes });
       if (error) throw error;
-      const nextRows = (data ?? []) as StatusRow[];
-      setRows(nextRows);
-      return nextRows;
+      const next = (data ?? []) as StatusRow[];
+      setRows(next);
+      return next;
     } catch (e: any) {
       setErr(e?.message ?? "Erro ao carregar");
       return [] as StatusRow[];
@@ -296,47 +280,30 @@ export default function StatusPage() {
       setLoading(false);
     }
   }
+
   async function loadSummary() {
-  const fn = role === "admin" ? "status_dashboard_summary" : "status_dashboard_summary_my";
-
-  const { data, error } = await supabase.rpc(fn, {
-    p_ano: ano,
-    p_mes: mes,
-  });
-
-  if (error) {
-    console.error("Erro summary:", error.message);
-    setSummary(null); // opcional
-    return;
-  }
-
-  const row = Array.isArray(data) ? data[0] : data;
-  if (!row) return;
-
-  setSummary({
-    total: row.total ?? 0,
-    abertas: row.abertas ?? 0,
-    concluidas: row.concluidas ?? 0,
-    alta: row.alta ?? 0,
-    media: row.media ?? 0,
-    baixa: row.baixa ?? 0,
-    em_analise: row.em_analise ?? 0,
-    // a função retorna "aguardando" (dashboard), mapeamos pro seu campo
-    aguardando_informacoes: row.aguardando ?? 0,
-    // se você ainda não implementou "resolvido", fica 0
-    resolvido: row.resolvido ?? 0,
-  });
-}
-
-  async function expandRow(id: string) {
-    setExpandedId((prev) => (prev === id ? null : id));
+    const fn = role === "admin" ? "status_dashboard_summary" : "status_dashboard_summary_my";
+    const { data, error } = await supabase.rpc(fn, { p_ano: ano, p_mes: mes });
+    if (error) {
+      setSummary(null);
+      return;
+    }
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) return;
+    setSummary({
+      total: row.total ?? 0,
+      abertas: row.abertas ?? 0,
+      concluidas: row.concluidas ?? 0,
+      alta: row.alta ?? 0,
+      media: row.media ?? 0,
+      baixa: row.baixa ?? 0,
+      em_analise: row.em_analise ?? 0,
+      aguardando_informacoes: row.aguardando ?? 0,
+      resolvido: row.resolvido ?? 0,
+    });
   }
 
   async function loadExpandedExtras(row: StatusRow) {
-    const h = await supabase.rpc("status_history_by_cpf", { p_cpf: row.cpf });
-    if (h.error) throw h.error;
-    setHistory((h.data ?? []) as HistoryRow[]);
-
     const c = await supabase
       .from("status_comments")
       .select("id,comentario,created_by,created_at")
@@ -348,6 +315,125 @@ export default function StatusPage() {
     const t = await supabase.rpc("status_timeline", { p_status_id: row.id });
     if (t.error) throw t.error;
     setTimeline((t.data ?? []) as TimelineItem[]);
+  }
+
+  function filterOutConcluded(ids: string[]) {
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    return ids.filter((id) => {
+      const row = byId.get(id);
+      if (!row) return true;
+      return !isStatusConsideredConcluded(row);
+    });
+  }
+
+  async function loadOperatorPendingNotifications() {
+    if (role !== "operador" || !userId) {
+      setOperatorPendingCount(0);
+      setOperatorPendingStatusIds([]);
+      return;
+    }
+
+    try {
+      const updatesResp = await supabase
+        .from("status_comments")
+        .select("status_id,comentario,created_by,created_at")
+        .ilike("comentario", `${OPERATOR_UPDATE_PREFIX}%`);
+
+      const ackResp = await supabase
+        .from("status_comments")
+        .select("status_id,comentario,created_by,created_at")
+        .eq("created_by", userId)
+        .or(
+          `comentario.ilike.${OPERATOR_CONFIRM_PREFIX}%,comentario.ilike.${OPERATOR_ACK_PREFIX}%,comentario.ilike.${OPERATOR_SENT_PREFIX}%`
+        );
+
+      if (updatesResp.error) throw updatesResp.error;
+      if (ackResp.error) throw ackResp.error;
+
+      const updates = (updatesResp.data ?? []) as any[];
+      const acks = (ackResp.data ?? []) as any[];
+
+      const latestUpdate = new Map<string, number>();
+      updates.forEach((i) => {
+        const ts = new Date(i.created_at).getTime();
+        if (ts > (latestUpdate.get(i.status_id) ?? 0)) latestUpdate.set(i.status_id, ts);
+      });
+
+      const latestAck = new Map<string, number>();
+      acks.forEach((i) => {
+        const ts = new Date(i.created_at).getTime();
+        if (ts > (latestAck.get(i.status_id) ?? 0)) latestAck.set(i.status_id, ts);
+      });
+
+      let pendingIds: string[] = [];
+      for (const [id, ts] of latestUpdate.entries()) {
+        const ackTs = latestAck.get(id) ?? 0;
+        if (ackTs < ts) pendingIds.push(id);
+      }
+
+      pendingIds = filterOutConcluded(pendingIds);
+
+      setOperatorPendingStatusIds(pendingIds);
+      setOperatorPendingCount(pendingIds.length);
+    } catch {
+      setOperatorPendingStatusIds([]);
+      setOperatorPendingCount(0);
+    }
+  }
+
+  async function loadReviewerPendingNotifications() {
+    if ((role !== "admin" && role !== "supervisor") || !userId) {
+      setReviewerPendingCount(0);
+      setReviewerPendingStatusIds([]);
+      return;
+    }
+
+    try {
+      const updatesResp = await supabase
+        .from("status_comments")
+        .select("status_id,comentario,created_by,created_at")
+        .eq("created_by", userId)
+        .ilike("comentario", `${OPERATOR_UPDATE_PREFIX}%`);
+
+      const opsResp = await supabase
+        .from("status_comments")
+        .select("status_id,comentario,created_by,created_at")
+        .or(
+          `comentario.ilike.${OPERATOR_CONFIRM_PREFIX}%,comentario.ilike.${OPERATOR_ACK_PREFIX}%,comentario.ilike.${OPERATOR_SENT_PREFIX}%`
+        );
+
+      if (updatesResp.error) throw updatesResp.error;
+      if (opsResp.error) throw opsResp.error;
+
+      const updates = (updatesResp.data ?? []) as any[];
+      const ops = (opsResp.data ?? []) as any[];
+
+      const latestUpdate = new Map<string, number>();
+      updates.forEach((i) => {
+        const ts = new Date(i.created_at).getTime();
+        if (ts > (latestUpdate.get(i.status_id) ?? 0)) latestUpdate.set(i.status_id, ts);
+      });
+
+      const latestOp = new Map<string, number>();
+      ops.forEach((i) => {
+        const ts = new Date(i.created_at).getTime();
+        if (ts > (latestOp.get(i.status_id) ?? 0)) latestOp.set(i.status_id, ts);
+      });
+
+      let pendingIds: string[] = [];
+      for (const [id, ts] of latestUpdate.entries()) {
+        const opTs = latestOp.get(id) ?? 0;
+        if (opTs > ts) pendingIds.push(id);
+      }
+
+      pendingIds = filterOutConcluded(pendingIds);
+
+      setReviewerPendingStatusIds(pendingIds);
+      setReviewerPendingCount(pendingIds.length);
+    } catch {
+      setReviewerPendingStatusIds([]);
+      setReviewerPendingCount(0);
+    }
   }
 
   useEffect(() => {
@@ -366,19 +452,15 @@ export default function StatusPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-useEffect(() => {
-  if (!userId) return; // espera o loadMe terminar
-
-  loadList();
-  loadSummary();
-  setExpandedId(null);
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [ano, mes, userId, role]);
-
+  useEffect(() => {
+    if (!userId) return;
+    loadList();
+    loadSummary();
+    setExpandedId(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ano, mes, userId, role]);
 
   useEffect(() => {
-    setOperatorUpdateText("");
     (async () => {
       if (!expandedRow) return;
       try {
@@ -390,16 +472,16 @@ useEffect(() => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expandedRow?.id]);
 
-  function canEdit() {
-    return role === "admin" || role === "supervisor";
-  }
-  function canDelete() {
-    return role === "admin";
-  }
+  useEffect(() => {
+    loadOperatorPendingNotifications();
+    loadReviewerPendingNotifications();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role, userId, rows]);
 
-  function canReopen() {
-    return role === "admin" || role === "supervisor";
-  }
+  const filteredRows = useMemo(
+    () => rows.filter((r) => (listTab === "ativos" ? !isStatusConsideredConcluded(r) : isStatusConsideredConcluded(r))),
+    [rows, listTab]
+  );
 
   async function onSaveForm(payload: {
     id?: string | null;
@@ -411,11 +493,10 @@ useEffect(() => {
     ano: number;
     mes: number;
   }) {
+    // Operador criando: abre modal
     if (!payload.id && role === "operador") {
-      const confirmed = window.confirm(
-        "Seu Status será criado e repassado para o supervisor. Confirme se todas as informações estão corretas antes de salvar"
-      );
-      if (!confirmed) return;
+      setConfirmCreatePayload(payload);
+      return;
     }
 
     setErr(null);
@@ -430,7 +511,6 @@ useEffect(() => {
         p_ano: payload.ano,
         p_mes: payload.mes,
       });
-
       if (error) throw error;
 
       setOpenForm(false);
@@ -444,61 +524,98 @@ useEffect(() => {
     }
   }
 
+  async function confirmCreateAndSave() {
+    if (!confirmCreatePayload) return;
+    setIsSavingCreate(true);
+    setErr(null);
+    try {
+      const payload = confirmCreatePayload;
+      const { data, error } = await supabase.rpc("status_upsert", {
+        p_id: null,
+        p_cpf: payload.cpf,
+        p_nome_usuario: payload.nome_usuario,
+        p_problematica: payload.problematica,
+        p_problematica_outro: payload.problematica === "Outro" ? payload.problematica_outro ?? "" : "",
+        p_prioridade: payload.prioridade,
+        p_ano: payload.ano,
+        p_mes: payload.mes,
+      });
+      if (error) throw error;
+
+      setConfirmCreatePayload(null);
+      setOpenForm(false);
+      setEditing(null);
+
+      await loadList();
+
+      const newId = (data as any) as string;
+      if (newId) setExpandedId(newId);
+    } catch (e: any) {
+      setErr(e?.message ?? "Erro ao salvar");
+    } finally {
+      setIsSavingCreate(false);
+    }
+  }
+
   async function onSetSituacao(statusId: string, situacaoId: string) {
     setErr(null);
     try {
-      const selectedSituacao = situacoes.find((s) => s.id === situacaoId) ?? null;
-      const selectedIsFinal =
-        !!selectedSituacao &&
-        (selectedSituacao.finaliza ||
-          ["concluido", "concluida", "resolvido", "resolvida", "finalizado", "finalizada"].some((slug) =>
-            (selectedSituacao.slug ?? "").includes(slug)
-          ));
-
-      const selectedNotification = (notificationOptionByStatus[statusId] ?? "").trim();
-      const mustNotifyOperator = (role === "admin" || role === "supervisor") && !selectedIsFinal;
-      if (mustNotifyOperator && !selectedNotification) {
-        setErr("Selecione uma opção de notificação ao Operador antes de atualizar a situação.");
-        return;
-      }
-
       const { error } = await supabase.rpc("status_set_situacao", {
         p_status_id: statusId,
         p_situacao_id: situacaoId,
       });
       if (error) throw error;
 
-      if (mustNotifyOperator) {
-        const notifyResult = await supabase.rpc("status_add_comment", {
-          p_status_id: statusId,
-          p_comentario: `${OPERATOR_UPDATE_PREFIX} ${selectedNotification}`,
-        });
-        if (notifyResult.error) throw notifyResult.error;
-      }
-
-      const refreshedRows = await loadList();
-      const targetRow = (refreshedRows ?? []).find((row) => row.id === statusId) ?? null;
-      const rowConcluded = targetRow ? isStatusConsideredConcluded(targetRow) : false;
-
-      if (selectedIsFinal && rowConcluded) {
-        setListTab("concluidos");
-        setExpandedId(null);
-        await loadOperatorPendingNotifications();
-        await loadReviewerPendingNotifications();
-        return;
-      }
-
-      if (mustNotifyOperator) {
-        setNotificationOptionByStatus((prev) => ({ ...prev, [statusId]: "" }));
-      }
+      await Promise.all([loadList(), loadSummary()]);
       setExpandedId(statusId);
-      await loadOperatorPendingNotifications();
-      await loadReviewerPendingNotifications();
-      if (expandedRow?.id === statusId) {
-        await loadExpandedExtras(expandedRow);
-      }
+      if (expandedRow?.id === statusId) await loadExpandedExtras(expandedRow);
     } catch (e: any) {
       setErr(e?.message ?? "Erro ao alterar situação");
+    }
+  }
+
+  async function onNotifyOperatorFromOption(statusId: string) {
+    if (role !== "admin" && role !== "supervisor") return;
+
+    const opt = (notificationOptionByStatus[statusId] ?? "").trim();
+    if (!opt) {
+      setErr("Selecione uma opção de notificação ao Operador antes de notificar.");
+      return;
+    }
+
+    setSendingNotify(true);
+    setErr(null);
+    try {
+      const { error } = await supabase.rpc("status_add_comment", {
+        p_status_id: statusId,
+        p_comentario: `${OPERATOR_UPDATE_PREFIX} ${opt}`,
+      });
+      if (error) throw error;
+
+      setNotificationOptionByStatus((prev) => ({ ...prev, [statusId]: "" }));
+      if (expandedRow?.id === statusId) await loadExpandedExtras(expandedRow);
+      await Promise.all([loadOperatorPendingNotifications(), loadReviewerPendingNotifications()]);
+    } catch (e: any) {
+      setErr(e?.message ?? "Erro ao notificar Operador");
+    } finally {
+      setSendingNotify(false);
+    }
+  }
+
+  async function onResolve(statusId: string) {
+    setErr(null);
+    setIsResolving(true);
+    try {
+      const { error } = await supabase.rpc("status_resolve", { p_status_id: statusId });
+      if (error) throw error;
+
+      setConfirmResolveId(null);
+      await Promise.all([loadList(), loadSummary(), loadOperatorPendingNotifications(), loadReviewerPendingNotifications()]);
+      setExpandedId(statusId);
+    } catch (e: any) {
+      setErr(e?.message ?? "Erro ao concluir");
+    } finally {
+      setIsResolving(false);
     }
   }
 
@@ -507,7 +624,8 @@ useEffect(() => {
     try {
       const { error } = await supabase.rpc("status_reopen", { p_status_id: statusId });
       if (error) throw error;
-      await loadList();
+
+      await Promise.all([loadList(), loadSummary(), loadOperatorPendingNotifications(), loadReviewerPendingNotifications()]);
       setExpandedId(statusId);
     } catch (e: any) {
       setErr(e?.message ?? "Erro ao reabrir");
@@ -523,8 +641,9 @@ useEffect(() => {
     try {
       const { error } = await supabase.rpc("status_delete", { p_status_id: statusId });
       if (error) throw error;
+
       setExpandedId(null);
-      await loadList();
+      await Promise.all([loadList(), loadSummary()]);
     } catch (e: any) {
       setErr(e?.message ?? "Erro ao excluir");
     }
@@ -542,33 +661,11 @@ useEffect(() => {
         p_comentario: txt,
       });
       if (error) throw error;
+
       setCommentText("");
       await loadExpandedExtras(expandedRow);
     } catch (e: any) {
       setErr(e?.message ?? "Erro ao comentar");
-    }
-  }
-
-  async function onNotifyOperator(statusId: string) {
-    const txt = operatorUpdateText.trim();
-    if (!txt) return;
-
-    setSendingOperatorUpdate(true);
-    setErr(null);
-    try {
-      const { error } = await supabase.rpc("status_add_comment", {
-        p_status_id: statusId,
-        p_comentario: `${OPERATOR_UPDATE_PREFIX} ${txt}`,
-      });
-      if (error) throw error;
-      setOperatorUpdateText("");
-      if (expandedRow) await loadExpandedExtras(expandedRow);
-      await loadOperatorPendingNotifications();
-      await loadReviewerPendingNotifications();
-    } catch (e: any) {
-      setErr(e?.message ?? "Erro ao enviar atualização ao operador");
-    } finally {
-      setSendingOperatorUpdate(false);
     }
   }
 
@@ -586,9 +683,9 @@ useEffect(() => {
         p_comentario: comment,
       });
       if (error) throw error;
-      if (expandedRow) await loadExpandedExtras(expandedRow);
-      await loadOperatorPendingNotifications();
-      await loadReviewerPendingNotifications();
+
+      if (expandedRow?.id === statusId) await loadExpandedExtras(expandedRow);
+      await Promise.all([loadOperatorPendingNotifications(), loadReviewerPendingNotifications()]);
     } catch (e: any) {
       setErr(e?.message ?? "Erro ao registrar ação do operador");
     } finally {
@@ -596,188 +693,25 @@ useEffect(() => {
     }
   }
 
-  async function loadOperatorPendingNotifications() {
-    if (role !== "operador" || !userId) {
-      setOperatorPendingCount(0);
-      setOperatorPendingStatusIds([]);
-      return;
-    }
-
-    try {
-      const [updatesResp, confirmResp, ackResp, sentResp] = await Promise.all([
-        supabase
-          .from("status_comments")
-          .select("status_id,comentario,created_by,created_at")
-          .ilike("comentario", `${OPERATOR_UPDATE_PREFIX}%`),
-        supabase
-          .from("status_comments")
-          .select("status_id,comentario,created_by,created_at")
-          .eq("created_by", userId)
-          .ilike("comentario", `${OPERATOR_CONFIRM_PREFIX}%`),
-        supabase
-          .from("status_comments")
-          .select("status_id,comentario,created_by,created_at")
-          .eq("created_by", userId)
-          .ilike("comentario", `${OPERATOR_ACK_PREFIX}%`),
-        supabase
-          .from("status_comments")
-          .select("status_id,comentario,created_by,created_at")
-          .eq("created_by", userId)
-          .ilike("comentario", `${OPERATOR_SENT_PREFIX}%`),
-      ]);
-
-      if (updatesResp.error) throw updatesResp.error;
-      if (confirmResp.error) throw confirmResp.error;
-      if (ackResp.error) throw ackResp.error;
-      if (sentResp.error) throw sentResp.error;
-
-      const updates = (updatesResp.data ?? []) as OperatorCommentRow[];
-      const confirms = ([...(confirmResp.data ?? []), ...(ackResp.data ?? []), ...(sentResp.data ?? [])]) as OperatorCommentRow[];
-
-      const latestUpdateByStatus = new Map<string, number>();
-      for (const item of updates) {
-        const ts = new Date(item.created_at).getTime();
-        const prev = latestUpdateByStatus.get(item.status_id) ?? 0;
-        if (ts > prev) latestUpdateByStatus.set(item.status_id, ts);
-      }
-
-      const latestConfirmByStatus = new Map<string, number>();
-      for (const item of confirms) {
-        const ts = new Date(item.created_at).getTime();
-        const prev = latestConfirmByStatus.get(item.status_id) ?? 0;
-        if (ts > prev) latestConfirmByStatus.set(item.status_id, ts);
-      }
-
-      let pending = 0;
-      const pendingStatusIds: string[] = [];
-      for (const [statusId, updateTs] of latestUpdateByStatus.entries()) {
-        const confirmTs = latestConfirmByStatus.get(statusId) ?? 0;
-        if (confirmTs < updateTs) {
-          pending += 1;
-          pendingStatusIds.push(statusId);
-        }
-      }
-
-      setOperatorPendingCount(pending);
-      setOperatorPendingStatusIds(pendingStatusIds);
-    } catch {
-      setOperatorPendingCount(0);
-      setOperatorPendingStatusIds([]);
-    }
-  }
-
-
-  async function loadReviewerPendingNotifications() {
-    if ((role !== "admin" && role !== "supervisor") || !userId) {
-      setReviewerPendingCount(0);
-      setReviewerPendingStatusIds([]);
-      return;
-    }
-
-    try {
-      const [updatesResp, confirmResp, ackResp, sentResp] = await Promise.all([
-        supabase
-          .from("status_comments")
-          .select("status_id,comentario,created_by,created_at")
-          .eq("created_by", userId)
-          .ilike("comentario", `${OPERATOR_UPDATE_PREFIX}%`),
-        supabase
-          .from("status_comments")
-          .select("status_id,comentario,created_by,created_at")
-          .ilike("comentario", `${OPERATOR_CONFIRM_PREFIX}%`),
-        supabase
-          .from("status_comments")
-          .select("status_id,comentario,created_by,created_at")
-          .ilike("comentario", `${OPERATOR_ACK_PREFIX}%`),
-        supabase
-          .from("status_comments")
-          .select("status_id,comentario,created_by,created_at")
-          .ilike("comentario", `${OPERATOR_SENT_PREFIX}%`),
-      ]);
-
-      if (updatesResp.error) throw updatesResp.error;
-      if (confirmResp.error) throw confirmResp.error;
-      if (ackResp.error) throw ackResp.error;
-      if (sentResp.error) throw sentResp.error;
-
-      const updates = (updatesResp.data ?? []) as OperatorCommentRow[];
-      const confirms = ([...(confirmResp.data ?? []), ...(ackResp.data ?? []), ...(sentResp.data ?? [])]) as OperatorCommentRow[];
-
-      const latestUpdateByStatus = new Map<string, number>();
-      for (const item of updates) {
-        const ts = new Date(item.created_at).getTime();
-        const prev = latestUpdateByStatus.get(item.status_id) ?? 0;
-        if (ts > prev) latestUpdateByStatus.set(item.status_id, ts);
-      }
-
-      const latestConfirmByStatus = new Map<string, number>();
-      for (const item of confirms) {
-        const ts = new Date(item.created_at).getTime();
-        const prev = latestConfirmByStatus.get(item.status_id) ?? 0;
-        if (ts > prev) latestConfirmByStatus.set(item.status_id, ts);
-      }
-
-      let pending = 0;
-      const pendingStatusIds: string[] = [];
-      for (const [statusId, updateTs] of latestUpdateByStatus.entries()) {
-        const confirmTs = latestConfirmByStatus.get(statusId) ?? 0;
-        if (confirmTs > updateTs) {
-          pending += 1;
-          pendingStatusIds.push(statusId);
-        }
-      }
-
-      setReviewerPendingCount(pending);
-      setReviewerPendingStatusIds(pendingStatusIds);
-    } catch {
-      setReviewerPendingCount(0);
-      setReviewerPendingStatusIds([]);
-    }
-  }
-
   function openCreate() {
     setEditing(null);
     setOpenForm(true);
   }
-
   function openEdit(row: StatusRow) {
     setEditing(row);
     setOpenForm(true);
   }
 
   async function onRefreshTop() {
-    await Promise.all([loadList(), loadSummary()]);
-    if (expandedRow) {
-      await loadExpandedExtras(expandedRow);
-    }
-    await loadOperatorPendingNotifications();
-    await loadReviewerPendingNotifications();
+    await Promise.all([loadList(), loadSummary(), loadOperatorPendingNotifications(), loadReviewerPendingNotifications()]);
+    if (expandedRow) await loadExpandedExtras(expandedRow);
   }
-
-  useEffect(() => {
-    loadOperatorPendingNotifications();
-    loadReviewerPendingNotifications();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [role, userId, rows]);
-
-  const filteredRows = useMemo(
-    () => rows.filter((r) => (listTab === "ativos" ? !isStatusConsideredConcluded(r) : isStatusConsideredConcluded(r))),
-    [rows, listTab]
-  );
-
-  useEffect(() => {
-    if (expandedId && !filteredRows.some((r) => r.id === expandedId)) {
-      setExpandedId(null);
-    }
-  }, [expandedId, filteredRows]);
-
-  const headerTitle = "Status";
 
   return (
     <div className="p-4 md:p-6 space-y-4">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-xl font-semibold">{headerTitle}</h1>
+          <h1 className="text-xl font-semibold">Status</h1>
           <p className="text-sm text-muted-foreground">Mês atual carregado por padrão • você pode filtrar por ano/mês</p>
         </div>
 
@@ -798,25 +732,16 @@ useEffect(() => {
             ))}
           </select>
 
-          <button
-            onClick={onRefreshTop}
-            className="rounded-md border px-3 py-1.5 text-sm bg-background hover:bg-muted"
-          >
+          <button onClick={onRefreshTop} className="rounded-md border px-3 py-1.5 text-sm bg-background hover:bg-muted">
             Atualizar
           </button>
 
           {role === "operador" && (
             <div
               className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md border text-sm ${
-                operatorPendingCount > 0
-                  ? "border-red-200 bg-red-50 text-red-700"
-                  : "border-slate-200 bg-white text-slate-500"
+                operatorPendingCount > 0 ? "border-red-200 bg-red-50 text-red-700" : "border-slate-200 bg-white text-slate-500"
               }`}
-              title={
-                operatorPendingCount > 0
-                  ? "Você tem atualizações pendentes para responder"
-                  : "Sem atualizações pendentes"
-              }
+              title={operatorPendingCount > 0 ? "Você tem atualizações pendentes" : "Sem atualizações pendentes"}
             >
               <span aria-hidden="true">🔔</span>
               <span>{operatorPendingCount}</span>
@@ -826,15 +751,9 @@ useEffect(() => {
           {(role === "admin" || role === "supervisor") && (
             <div
               className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md border text-sm ${
-                reviewerPendingCount > 0
-                  ? "border-red-200 bg-red-50 text-red-700"
-                  : "border-slate-200 bg-white text-slate-500"
+                reviewerPendingCount > 0 ? "border-red-200 bg-red-50 text-red-700" : "border-slate-200 bg-white text-slate-500"
               }`}
-              title={
-                reviewerPendingCount > 0
-                  ? "Operador confirmou respostas pendentes de conclusão"
-                  : "Sem confirmações pendentes"
-              }
+              title={reviewerPendingCount > 0 ? "Operador respondeu e aguarda conclusão" : "Sem confirmações pendentes"}
             >
               <span aria-hidden="true">🔔</span>
               <span>{reviewerPendingCount}</span>
@@ -842,10 +761,7 @@ useEffect(() => {
           )}
 
           {!roleLoading && (role === "admin" || role === "supervisor" || role === "operador") && (
-            <button
-              onClick={openCreate}
-              className="rounded-md bg-black text-white px-3 py-1.5 text-sm hover:opacity-90"
-            >
+            <button onClick={openCreate} className="rounded-md bg-black text-white px-3 py-1.5 text-sm hover:opacity-90">
               Novo Status
             </button>
           )}
@@ -859,55 +775,46 @@ useEffect(() => {
           Ao salvar um novo Status, ele será repassado para Supervisor e Administrador. Após salvar, você não poderá editar.
         </div>
       )}
-      
+
       {summary && (
-  <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3">
-    <div className="border rounded-lg p-3">
-      <div className="text-xs text-muted-foreground">Total</div>
-      <div className="text-2xl font-semibold">{summary.total}</div>
-    </div>
-
-    <div className="border rounded-lg p-3">
-      <div className="text-xs text-muted-foreground">Abertas</div>
-      <div className="text-2xl font-semibold">{summary.abertas}</div>
-    </div>
-
-    <div className="border rounded-lg p-3">
-      <div className="text-xs text-muted-foreground">Concluídas</div>
-      <div className="text-2xl font-semibold">{summary.concluidas}</div>
-    </div>
-
-    <div className="border rounded-lg p-3">
-      <div className="text-xs text-muted-foreground">Alta</div>
-      <div className="text-2xl font-semibold">{summary.alta}</div>
-    </div>
-
-    <div className="border rounded-lg p-3">
-      <div className="text-xs text-muted-foreground">Em análise</div>
-      <div className="text-2xl font-semibold">{summary.em_analise}</div>
-    </div>
-
-    <div className="border rounded-lg p-3">
-      <div className="text-xs text-muted-foreground">Aguardando info</div>
-      <div className="text-2xl font-semibold">{summary.aguardando_informacoes}</div>
-    </div>
-  </div>
-)}
+        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3">
+          <div className="border rounded-lg p-3">
+            <div className="text-xs text-muted-foreground">Total</div>
+            <div className="text-2xl font-semibold">{summary.total}</div>
+          </div>
+          <div className="border rounded-lg p-3">
+            <div className="text-xs text-muted-foreground">Abertas</div>
+            <div className="text-2xl font-semibold">{summary.abertas}</div>
+          </div>
+          <div className="border rounded-lg p-3">
+            <div className="text-xs text-muted-foreground">Concluídas</div>
+            <div className="text-2xl font-semibold">{summary.concluidas}</div>
+          </div>
+          <div className="border rounded-lg p-3">
+            <div className="text-xs text-muted-foreground">Alta</div>
+            <div className="text-2xl font-semibold">{summary.alta}</div>
+          </div>
+          <div className="border rounded-lg p-3">
+            <div className="text-xs text-muted-foreground">Em análise</div>
+            <div className="text-2xl font-semibold">{summary.em_analise}</div>
+          </div>
+          <div className="border rounded-lg p-3">
+            <div className="text-xs text-muted-foreground">Aguardando info</div>
+            <div className="text-2xl font-semibold">{summary.aguardando_informacoes}</div>
+          </div>
+        </div>
+      )}
 
       <div className="flex items-center gap-2">
         <button
           onClick={() => setListTab("ativos")}
-          className={`px-4 py-2 text-sm rounded-md border ${
-            listTab === "ativos" ? "bg-slate-900 text-white border-slate-900" : "bg-white hover:bg-muted"
-          }`}
+          className={`px-4 py-2 text-sm rounded-md border ${listTab === "ativos" ? "bg-slate-900 text-white border-slate-900" : "bg-white hover:bg-muted"}`}
         >
           Ativos ({rows.filter((r) => !isStatusConsideredConcluded(r)).length})
         </button>
         <button
           onClick={() => setListTab("concluidos")}
-          className={`px-4 py-2 text-sm rounded-md border ${
-            listTab === "concluidos" ? "bg-slate-900 text-white border-slate-900" : "bg-white hover:bg-muted"
-          }`}
+          className={`px-4 py-2 text-sm rounded-md border ${listTab === "concluidos" ? "bg-slate-900 text-white border-slate-900" : "bg-white hover:bg-muted"}`}
         >
           Concluídos ({rows.filter((r) => isStatusConsideredConcluded(r)).length})
         </button>
@@ -945,29 +852,20 @@ useEffect(() => {
               ) : (
                 filteredRows.map((r) => {
                   const isExpanded = expandedId === r.id;
-                  const situacaoLabel = r.situacao_nome
-                    ? `${r.situacao_nome}${r.situacao_por_nome ? ` — (${r.situacao_por_nome})` : ""}`
-                    : "—";
+                  const situacaoLabel = r.situacao_nome ? `${r.situacao_nome}${r.situacao_por_nome ? ` — (${r.situacao_por_nome})` : ""}` : "—";
                   const hasOperatorUpdate = role === "operador" && operatorPendingStatusIds.includes(r.id);
                   const hasReviewerUpdate = (role === "admin" || role === "supervisor") && reviewerPendingStatusIds.includes(r.id);
-                  const hasPendingNotification = hasOperatorUpdate || hasReviewerUpdate;
+                  const hasPending = hasOperatorUpdate || hasReviewerUpdate;
 
                   return (
                     <React.Fragment key={r.id}>
-                      {/* ✅ Linha com destaque quando expandida */}
                       <tr
-                        onClick={() => expandRow(r.id)}
-                        className={`
-                          border-t cursor-pointer transition-colors
-                          hover:bg-muted/30
-                          ${isExpanded ? "bg-muted/60 border-l-4 border-primary" : ""}
-                        `}
+                        onClick={() => setExpandedId((prev) => (prev === r.id ? null : r.id))}
+                        className={`border-t cursor-pointer transition-colors hover:bg-muted/30 ${isExpanded ? "bg-muted/60 border-l-4 border-primary" : ""}`}
                       >
                         <td className="p-3 font-mono">{r.cpf}</td>
                         <td className="p-3">{r.nome_usuario}</td>
-                        <td className="p-3">
-                          {r.problematica === "Outro" ? `Outro: ${r.problematica_outro ?? ""}` : r.problematica}
-                        </td>
+                        <td className="p-3">{r.problematica === "Outro" ? `Outro: ${r.problematica_outro ?? ""}` : r.problematica}</td>
                         <td className="p-3">
                           <span className={priorityPill(r.prioridade)}>{r.prioridade}</span>
                         </td>
@@ -975,8 +873,8 @@ useEffect(() => {
                           <span className="inline-flex items-center gap-2" title={r.situacao_em ? `Definido em ${formatDateTime(r.situacao_em)}` : ""}>
                             <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: r.situacao_cor ?? "#94a3b8" }} />
                             <span>{situacaoLabel}</span>
-                            {hasPendingNotification && (
-                              <span className="inline-flex items-center rounded-full bg-red-100 text-red-700 px-2 py-0.5 text-xs font-medium" title={hasOperatorUpdate ? "Você tem atualização pendente neste status" : "Operador confirmou envio e aguarda sua decisão de conclusão"}>
+                            {hasPending && (
+                              <span className="inline-flex items-center rounded-full bg-red-100 text-red-700 px-2 py-0.5 text-xs font-medium">
                                 🔔
                               </span>
                             )}
@@ -998,17 +896,8 @@ useEffect(() => {
                         <tr className="border-t">
                           <td className="p-4 bg-background" colSpan={8}>
                             <div className="space-y-4">
-                              <div className="flex items-center justify-between flex-wrap gap-2">
-                                <div className="flex gap-2 items-center flex-wrap">
-                                  <button
-                                    className={`px-3 py-1.5 rounded-md text-sm border ${tab === "historico" ? "bg-muted" : "bg-background"}`}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setTab("historico");
-                                    }}
-                                  >
-                                    Histórico (CPF)
-                                  </button>
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <div className="flex gap-2">
                                   <button
                                     className={`px-3 py-1.5 rounded-md text-sm border ${tab === "comentarios" ? "bg-muted" : "bg-background"}`}
                                     onClick={(e) => {
@@ -1030,59 +919,63 @@ useEffect(() => {
                                 </div>
 
                                 <div className="flex items-center gap-2 flex-wrap">
-                                  {/* 🔒 SITUAÇÃO: somente supervisor/admin (e trava se concluído) */}
                                   {(role === "admin" || role === "supervisor") ? (
                                     <>
-                                    <select
-                                      className="border rounded-md px-2 py-1 text-sm bg-background"
-                                      value={r.situacao_id ?? ""}
-                                      disabled={isStatusConsideredConcluded(r)}
-                                      onClick={(e) => e.stopPropagation()}
-                                      onChange={(e) => {
-                                        e.stopPropagation();
-                                        const v = e.target.value;
-                                        if (!v) return;
-                                        onSetSituacao(r.id, v);
-                                      }}
-                                      title={isStatusConsideredConcluded(r) ? "Registro concluído. Reabra para alterar a situação." : ""}
-                                    >
-                                      <option value="">Definir situação...</option>
-                                      {situacoes.map((s) => (
-                                        <option key={s.id} value={s.id}>
-                                          {s.nome}
-                                        </option>
-                                      ))}
-                                    </select>
-
-                                    {!isStatusConsideredConcluded(r) && (
                                       <select
                                         className="border rounded-md px-2 py-1 text-sm bg-background"
-                                        value={notificationOptionByStatus[r.id] ?? ""}
+                                        value={r.situacao_id ?? ""}
+                                        disabled={isStatusConsideredConcluded(r)}
                                         onClick={(e) => e.stopPropagation()}
                                         onChange={(e) => {
                                           e.stopPropagation();
-                                          setNotificationOptionByStatus((prev) => ({ ...prev, [r.id]: e.target.value }));
+                                          const v = e.target.value;
+                                          if (!v) return;
+                                          onSetSituacao(r.id, v);
                                         }}
-                                        title="Selecione a notificação obrigatória ao Operador ao atualizar a situação"
                                       >
-                                        <option value="">Notificação ao Operador...</option>
-                                        {OPERATOR_NOTIFICATION_OPTIONS.map((opt) => (
-                                          <option key={opt} value={opt}>
-                                            {opt}
+                                        <option value="">Definir situação...</option>
+                                        {situacoes.map((s) => (
+                                          <option key={s.id} value={s.id}>
+                                            {s.nome}
                                           </option>
                                         ))}
                                       </select>
-                                    )}
+
+                                      {!isStatusConsideredConcluded(r) && (
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <select
+                                            className="border rounded-md px-2 py-1 text-sm bg-background"
+                                            value={notificationOptionByStatus[r.id] ?? ""}
+                                            onClick={(e) => e.stopPropagation()}
+                                            onChange={(e) => {
+                                              e.stopPropagation();
+                                              setNotificationOptionByStatus((prev) => ({ ...prev, [r.id]: e.target.value }));
+                                            }}
+                                          >
+                                            <option value="">Notificação ao Operador...</option>
+                                            {OPERATOR_NOTIFICATION_OPTIONS.map((opt) => (
+                                              <option key={opt} value={opt}>
+                                                {opt}
+                                              </option>
+                                            ))}
+                                          </select>
+
+                                          <button
+                                            className="px-3 py-1.5 rounded-md text-sm border bg-background hover:bg-muted disabled:opacity-60"
+                                            disabled={sendingNotify}
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              onNotifyOperatorFromOption(r.id);
+                                            }}
+                                          >
+                                            {sendingNotify ? "Notificando..." : "Notificar"}
+                                          </button>
+                                        </div>
+                                      )}
                                     </>
                                   ) : (
-                                    <div
-                                      className="px-3 py-1.5 text-sm border rounded-md bg-muted/30 text-muted-foreground"
-                                      onClick={(e) => e.stopPropagation()}
-                                      title="Somente supervisor/admin podem alterar a situação."
-                                    >
-                                      {r.situacao_nome
-                                        ? `${r.situacao_nome}${r.situacao_por_nome ? ` — (${r.situacao_por_nome})` : ""}`
-                                        : "—"}
+                                    <div className="px-3 py-1.5 text-sm border rounded-md bg-muted/30 text-muted-foreground" onClick={(e) => e.stopPropagation()}>
+                                      {situacaoLabel}
                                     </div>
                                   )}
 
@@ -1095,6 +988,18 @@ useEffect(() => {
                                       }}
                                     >
                                       Reabrir
+                                    </button>
+                                  )}
+
+                                  {(role === "admin" || role === "supervisor") && !isStatusConsideredConcluded(r) && (
+                                    <button
+                                      className="px-3 py-1.5 rounded-md text-sm border bg-background hover:bg-muted"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setConfirmResolveId(r.id);
+                                      }}
+                                    >
+                                      Concluir
                                     </button>
                                   )}
 
@@ -1124,225 +1029,38 @@ useEffect(() => {
                                 </div>
                               </div>
 
-                              {isExpanded && (() => {
-                                const operatorUpdates = comments.filter((c) => c.comentario?.startsWith(OPERATOR_UPDATE_PREFIX));
-                                const latestOperatorUpdate = operatorUpdates[0] ?? null;
-                                const updateText = latestOperatorUpdate
-                                  ? latestOperatorUpdate.comentario.replace(OPERATOR_UPDATE_PREFIX, "").trim()
-                                  : "";
-                                const operatorActions = comments.filter(
-                                  (c) =>
-                                    c.created_by === userId &&
-                                    (c.comentario?.startsWith(OPERATOR_CONFIRM_PREFIX) ||
-                                      c.comentario?.startsWith(OPERATOR_ACK_PREFIX) ||
-                                      c.comentario?.startsWith(OPERATOR_SENT_PREFIX))
-                                );
-                                const latestOperatorAction = operatorActions[0] ?? null;
-                                const hasPendingOperatorUpdate =
-                                  role === "operador" &&
-                                  !!latestOperatorUpdate &&
-                                  (!latestOperatorAction ||
-                                    new Date(latestOperatorAction.created_at).getTime() <
-                                      new Date(latestOperatorUpdate.created_at).getTime());
-
-                                const reviewerUpdates = comments.filter(
-                                  (c) => c.comentario?.startsWith(OPERATOR_UPDATE_PREFIX) && c.created_by === userId
-                                );
-                                const latestReviewerUpdate = reviewerUpdates[0] ?? null;
-                                const allOperatorActions = comments.filter(
-                                  (c) =>
-                                    c.comentario?.startsWith(OPERATOR_CONFIRM_PREFIX) ||
-                                    c.comentario?.startsWith(OPERATOR_ACK_PREFIX) ||
-                                    c.comentario?.startsWith(OPERATOR_SENT_PREFIX)
-                                );
-                                const latestAnyOperatorAction = allOperatorActions[0] ?? null;
-                                const hasReviewerConfirmationPending =
-                                  (role === "admin" || role === "supervisor") &&
-                                  !!latestReviewerUpdate &&
-                                  !!latestAnyOperatorAction &&
-                                  new Date(latestAnyOperatorAction.created_at).getTime() >
-                                    new Date(latestReviewerUpdate.created_at).getTime();
-                                const latestActionIsReplySent =
-                                  !!latestAnyOperatorAction &&
-                                  (latestAnyOperatorAction.comentario?.startsWith(OPERATOR_SENT_PREFIX) ||
-                                    latestAnyOperatorAction.comentario?.startsWith(OPERATOR_CONFIRM_PREFIX));
-
-                                return (
-                                  <div className="space-y-2">
-                                    {(role === "admin" || role === "supervisor") && (
-                                      <div className="border rounded-md p-3 bg-slate-50">
-                                        <div className="text-sm font-medium mb-2">Atualização para Operador</div>
-                                        <div className="flex gap-2 flex-wrap">
-                                          <input
-                                            value={operatorUpdateText}
-                                            onChange={(e) => setOperatorUpdateText(e.target.value)}
-                                            placeholder="Descreva a atualização do caso para o operador"
-                                            className="flex-1 min-w-[260px] border rounded-md px-3 py-2 text-sm bg-background"
-                                          />
-                                          <button
-                                            className="px-3 py-2 rounded-md text-sm border bg-background hover:bg-muted disabled:opacity-60"
-                                            disabled={sendingOperatorUpdate || !operatorUpdateText.trim()}
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              onNotifyOperator(r.id);
-                                            }}
-                                          >
-                                            {sendingOperatorUpdate ? "Enviando..." : "Notificar Operador"}
-                                          </button>
-                                        </div>
-                                      </div>
-                                    )}
-
-                                    {hasReviewerConfirmationPending && !isStatusConsideredConcluded(r) && (
-                                      <div className="border rounded-md p-3 bg-red-50 border-red-200 space-y-2">
-                                        <div className="text-sm font-medium text-red-900 inline-flex items-center gap-2">
-                                          <span aria-hidden="true">🔔</span>
-                                          <span>O operador informou que a resposta foi enviada ao usuário.</span>
-                                        </div>
-                                        <div className="text-sm text-red-900">
-                                          {latestActionIsReplySent
-                                            ? <>Operador informou que a <strong>resposta foi enviada</strong>. Atualize a situação para <strong>Resolvido</strong> no seletor acima para concluir automaticamente.</>
-                                            : <>Operador marcou <strong>Ciente</strong>. Você pode atualizar novamente o status/etiqueta e notificar o operador.</>}
-                                        </div>
-                                      </div>
-                                    )}
-
-                                    {role === "operador" && latestOperatorUpdate && (
-                                      <div className="border rounded-md p-3 bg-amber-50 border-amber-200">
-                                        <div className="text-sm font-medium text-amber-900">Atualização recebida</div>
-                                        <div className="text-sm text-amber-900 mt-1">{updateText || "Sem detalhes"}</div>
-
-                                        {hasPendingOperatorUpdate ? (
-                                          <div className="mt-3 flex items-center gap-2 flex-wrap">
-                                            <button
-                                              className="px-3 py-2 rounded-md text-sm border bg-background hover:bg-muted disabled:opacity-60"
-                                              disabled={confirmingOperatorReply}
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                onOperatorRegisterAction(r.id, "ciente");
-                                              }}
-                                            >
-                                              Ciente
-                                            </button>
-                                            <button
-                                              className="px-3 py-2 rounded-md text-sm border bg-background hover:bg-muted disabled:opacity-60"
-                                              disabled={confirmingOperatorReply}
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                onOperatorRegisterAction(r.id, "resposta_enviada");
-                                              }}
-                                            >
-                                              Resposta enviada ao usuário
-                                            </button>
-                                          </div>
-                                        ) : (
-                                          <div className="mt-3 text-sm text-amber-900">Ação do operador já registrada para esta atualização.</div>
-                                        )}
-                                      </div>
-                                    )}
+                              {role === "operador" && operatorPendingStatusIds.includes(r.id) && (
+                                <div className="border rounded-md p-3 bg-amber-50 border-amber-200">
+                                  <div className="text-sm font-medium text-amber-900">Atualização recebida</div>
+                                  <div className="text-sm text-amber-900 mt-1">
+                                    Existe uma atualização pendente. Marque uma ação:
                                   </div>
-                                );
-                              })()}
-
-                              {tab === "historico" && (
-                                <div className="border rounded-lg overflow-hidden">
-                                  <div className="w-full overflow-auto">
-                                    <table className="min-w-[900px] w-full text-sm">
-                                      <thead className="bg-muted/50">
-                                        <tr className="text-left">
-                                          <th className="p-3">Data</th>
-                                          <th className="p-3">Ano/Mês</th>
-                                          <th className="p-3">Problemática</th>
-                                          <th className="p-3">Prioridade</th>
-                                          <th className="p-3">Situação</th>
-                                          <th className="p-3">Operador</th>
-                                          <th className="p-3">Concluído</th>
-                                          <th className="p-3">Ações</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody>
-                                        {history.map((h) => (
-                                          <tr className="border-t" key={h.id}>
-                                            <td className="p-3">{formatDateTime(h.atualizado_em)}</td>
-                                            <td className="p-3">
-                                              {pad2(h.mes)}/{h.ano}
-                                            </td>
-                                            <td className="p-3">
-                                              {h.problematica === "Outro" ? `Outro: ${h.problematica_outro ?? ""}` : h.problematica}
-                                            </td>
-                                            <td className="p-3">
-                                              <span className={priorityPill(h.prioridade)}>{h.prioridade}</span>
-                                            </td>
-                                            <td className="p-3">
-                                              {h.situacao_nome
-                                                ? `${h.situacao_nome}${h.situacao_por_nome ? ` — (${h.situacao_por_nome})` : ""}`
-                                                : "—"}
-                                            </td>
-                                            <td className="p-3">{h.operador_nome ?? "—"}</td>
-                                            <td className="p-3">{h.concluida ? `Sim (${formatDateTime(h.concluida_em)})` : "Não"}</td>
-                                            <td className="p-3">
-                                              {canEdit() ? (
-                                                <button
-                                                  className="px-3 py-1.5 rounded-md text-sm border bg-background hover:bg-muted"
-                                               onClick={async (e) => {
-                                                e.stopPropagation();
-
-                                                const { data, error } = await supabase.rpc("status_get_edit_payload", {
-                                                  p_status_id: h.id,
-                                                });
-
-                                                if (error) {
-                                                  setErr(error.message);
-                                                  return;
-                                                }
-
-                                                const row = Array.isArray(data) ? data[0] : data;
-                                                if (!row) {
-                                                  setErr("Registro não encontrado ou sem permissão.");
-                                                  return;
-                                                }
-
-                                                openEdit({
-                                                  id: row.id,
-                                                  cpf: row.cpf,
-                                                  nome_usuario: row.nome_usuario,
-                                                  problematica: row.problematica,
-                                                  problematica_outro: row.problematica_outro,
-                                                  prioridade: row.prioridade,
-                                                  ano: row.ano,
-                                                  mes: row.mes,
-                                                  operador_id: row.created_by,
-                                                  operador_nome: null,
-                                                  atualizado_em: row.updated_at,
-                                                  situacao_id: null,
-                                                  situacao_nome: null,
-                                                  situacao_slug: null,
-                                                  situacao_cor: null,
-                                                  situacao_por: null,
-                                                  situacao_por_nome: null,
-                                                  situacao_em: null,
-                                                  concluida: row.concluida,
-                                                  concluida_em: null,
-                                                  concluida_por: null,
-                                                  concluida_por_nome: null,
-                                                } as any);
-                                              }}
-                                                >
-                                                  Editar
-                                                </button>
-                                              ) : (
-                                                <span className="text-xs text-muted-foreground">—</span>
-                                              )}
-                                            </td>
-                                          </tr>
-                                        ))}
-                                      </tbody>
-                                    </table>
+                                  <div className="mt-3 flex items-center gap-2 flex-wrap">
+                                    <button
+                                      className="px-3 py-2 rounded-md text-sm border bg-background hover:bg-muted disabled:opacity-60"
+                                      disabled={confirmingOperatorReply}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        onOperatorRegisterAction(r.id, "ciente");
+                                      }}
+                                    >
+                                      Ciente
+                                    </button>
+                                    <button
+                                      className="px-3 py-2 rounded-md text-sm border bg-background hover:bg-muted disabled:opacity-60"
+                                      disabled={confirmingOperatorReply}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        onOperatorRegisterAction(r.id, "resposta_enviada");
+                                      }}
+                                    >
+                                      Resposta enviada ao usuário
+                                    </button>
                                   </div>
                                 </div>
                               )}
 
-                              {tab === "comentarios" && (
+                              {tab === "comentarios" ? (
                                 <div className="space-y-3">
                                   <div className="flex gap-2">
                                     <input
@@ -1369,9 +1087,7 @@ useEffect(() => {
                                     )}
                                   </div>
                                 </div>
-                              )}
-
-                              {tab === "timeline" && (
+                              ) : (
                                 <div className="space-y-2">
                                   {timeline.length === 0 ? (
                                     <div className="text-sm text-muted-foreground">Sem eventos ainda.</div>
@@ -1411,6 +1127,44 @@ useEffect(() => {
           </table>
         </div>
       </div>
+
+      {/* Modal confirmação CRIAÇÃO (Operador) */}
+      {confirmCreatePayload && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => !isSavingCreate && setConfirmCreatePayload(null)}>
+          <div className="w-full max-w-md bg-white rounded-xl shadow-xl p-5" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold mb-2">Confirmar criação</h3>
+            <p className="text-sm text-slate-600 mb-4">
+              Seu Status será criado e repassado para ao Supervisor. Confirme se todas as informações estão corretas antes de salvar.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button className="px-3 py-2 rounded-md text-sm border" onClick={() => setConfirmCreatePayload(null)} disabled={isSavingCreate}>
+                Cancelar
+              </button>
+              <button className="px-3 py-2 rounded-md text-sm bg-slate-900 text-white disabled:opacity-60" onClick={confirmCreateAndSave} disabled={isSavingCreate}>
+                {isSavingCreate ? "Salvando..." : "Salvar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal confirmação CONCLUIR */}
+      {confirmResolveId && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => !isResolving && setConfirmResolveId(null)}>
+          <div className="w-full max-w-md bg-white rounded-xl shadow-xl p-5" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold mb-2">Concluir status</h3>
+            <p className="text-sm text-slate-600 mb-4">Você está concluindo a situação desse Status. Tem certeza?</p>
+            <div className="flex gap-2 justify-end">
+              <button className="px-3 py-2 rounded-md text-sm border" onClick={() => setConfirmResolveId(null)} disabled={isResolving}>
+                Cancelar
+              </button>
+              <button className="px-3 py-2 rounded-md text-sm bg-slate-900 text-white disabled:opacity-60" onClick={() => onResolve(confirmResolveId)} disabled={isResolving}>
+                {isResolving ? "Concluindo..." : "Sim, concluir"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {openForm && (
         <StatusForm
@@ -1461,21 +1215,9 @@ function StatusForm({
 
   function submit() {
     const digits = onlyDigits(cpf);
-
-    if (!digits || digits.length !== 11) {
-      setErro("CPF deve conter 11 dígitos.");
-      return;
-    }
-
-    if (!nomeUsuario.trim()) {
-      setErro("Informe o nome do usuário.");
-      return;
-    }
-
-    if (!problematica.trim()) {
-      setErro("Selecione a problemática.");
-      return;
-    }
+    if (!digits || digits.length !== 11) return setErro("CPF deve conter 11 dígitos.");
+    if (!nomeUsuario.trim()) return setErro("Informe o nome do usuário.");
+    if (!problematica.trim()) return setErro("Selecione a problemática.");
 
     setErro(null);
 
